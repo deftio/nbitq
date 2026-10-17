@@ -1,0 +1,18 @@
+# Build artifacts from the standalone Makefile
+nbitq_test
+nbitq_container_test
+nbitq_test_asan
+nbitq_container_asan
+nbitq_fuzz
+nbitq_cxx
+*.o
+*.dSYM/
+
+# CMake, when built standalone
+build*/
+
+# libFuzzer leavings
+crash-*
+timeout-*
+oom-*
+corpus/
