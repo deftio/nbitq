@@ -10,7 +10,9 @@
 #   make size           code size per optimisation level
 #   make targets        cross-compile freestanding for embedded targets
 #
-# Copyright (c) 2026 M. A. Chatterjee, BSD-2-Clause.
+#   ./release.sh        all of the above plus cmake, as CI runs it; see CONTRIBUTING.md
+#
+# Copyright (c) 2026 deftio / M. A. Chatterjee, BSD-2-Clause.
 
 CC      ?= cc
 CXX     ?= c++
@@ -95,5 +97,5 @@ check: test test-container sanitize fuzz cxx nomalloc
 clean:
 	rm -f nbitq_test nbitq_container_test nbitq_test_asan nbitq_container_asan \
 	      nbitq_fuzz nbitq_cxx nbitq.o nbitq_container.o nbitq_nomalloc.o \
-	      .size.o .t.o .cxx_check.cpp
+	      .size.o .t.o
 	rm -rf *.dSYM

@@ -3,7 +3,7 @@
  * @brief Both headers promise extern "C". This proves it by compiling and
  *        linking them from C++, which is the only way that claim can be true.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 

@@ -48,7 +48,7 @@
  *   positions past the end, overlong varints and values too wide for 64 bits
  *   are errors, not approximations.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 
@@ -67,6 +67,16 @@ extern "C" {
 #define NBQ_VERSION_PATCH 0
 #define NBQ_VERSION_STRING "0.1.0"
 
+/** The three parts packed as 0x00MMmmpp, so versions compare as integers:
+ *  `#if NBQ_VERSION >= 0x000200` */
+#define NBQ_VERSION ((NBQ_VERSION_MAJOR << 16) | (NBQ_VERSION_MINOR << 8) | NBQ_VERSION_PATCH)
+
+/** The version of the library that was compiled and linked, which is not
+ *  always the version of the header a caller included. Both are constants
+ *  compiled into nbitq.c; neither allocates or needs libc. */
+const char *nbq_version_string(void);   /**< NBQ_VERSION_STRING, "1.2.3" for 1.2.3 */
+uint32_t    nbq_version(void);          /**< NBQ_VERSION, 0x010203 for 1.2.3 */
+
 /* ── Results ─────────────────────────────────────────────────────────────
  * A small closed set. This library returns these and nothing else, which is
  * what lets it be dropped into a project that has its own error type without
@@ -81,8 +91,9 @@ typedef enum {
     NBQ_ERR_ALLOC = -5     /**< only from nbq_writer_init_alloc / grow */
 } nbq_result;
 
-/** Human-readable form of a result. Its own translation unit, so a size-
- *  constrained build can leave the strings out by not linking it. */
+/** Human-readable form of a result. The strings are the only rodata in the
+ *  core; a size-constrained build that never calls this drops them with
+ *  -ffunction-sections -fdata-sections and --gc-sections. */
 const char *nbq_strerror(nbq_result rc);
 
 /** Widest field a single call moves. */

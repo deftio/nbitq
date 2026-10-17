@@ -7,7 +7,7 @@
  * representative: every width, every varint base, every alignment. A bit
  * library that is right for 90% of widths is not useful.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 
@@ -485,6 +485,19 @@ static void test_strerror_covers_every_code(void)
     CHECK(strlen(nbq_strerror((nbq_result)-999)) > 0, "strerror(unknown)");
 }
 
+static void test_version_is_self_reported(void)
+{
+    char expect[32];
+    snprintf(expect, sizeof expect, "%d.%d.%d",
+             NBQ_VERSION_MAJOR, NBQ_VERSION_MINOR, NBQ_VERSION_PATCH);
+    CHECK(strcmp(NBQ_VERSION_STRING, expect) == 0, "NBQ_VERSION_STRING matches MAJOR.MINOR.PATCH");
+    CHECK(strcmp(nbq_version_string(), NBQ_VERSION_STRING) == 0, "nbq_version_string()");
+    CHECK(nbq_version() == (uint32_t)NBQ_VERSION, "nbq_version()");
+    CHECK((nbq_version() >> 16) == (uint32_t)NBQ_VERSION_MAJOR, "nbq_version() major");
+    CHECK(((nbq_version() >> 8) & 0xFFu) == (uint32_t)NBQ_VERSION_MINOR, "nbq_version() minor");
+    CHECK((nbq_version() & 0xFFu) == (uint32_t)NBQ_VERSION_PATCH, "nbq_version() patch");
+}
+
 int main(void)
 {
     test_u64_every_width_and_offset();
@@ -505,6 +518,7 @@ int main(void)
     test_writer_seek_backpatch();
     test_alignment();
     test_strerror_covers_every_code();
+    test_version_is_self_reported();
 
     printf("nbitq: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

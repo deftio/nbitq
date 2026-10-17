@@ -9,7 +9,7 @@
  * wrongly. A word-at-a-time path belongs beside this one, cross-checked
  * against it, not instead of it.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 
@@ -50,6 +50,16 @@ static inline int in_range(uint64_t limit, uint64_t pos, uint64_t n)
 }
 
 /* ── Results ─────────────────────────────────────────────────────────── */
+
+const char *nbq_version_string(void)
+{
+    return NBQ_VERSION_STRING;
+}
+
+uint32_t nbq_version(void)
+{
+    return (uint32_t)NBQ_VERSION;
+}
 
 const char *nbq_strerror(nbq_result rc)
 {

@@ -1,0 +1,118 @@
+name: CI
+
+# Every push and pull request runs the suite. The stages are defined once, in
+# release.sh, and run one per job here so they parallelise and a failure
+# names its job. A push to main that is green and whose version has no tag
+# yet is then tagged and released by the last job, so cutting a release is:
+# ./release.sh X.Y.Z, commit, push. See CONTRIBUTING.md §Releasing.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # make check on three toolchains. gcc warns about things Apple clang does
+  # not, so Linux/gcc is the strict one; release.sh fails on any warning.
+  make-check:
+    name: make check / ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, cc: gcc,   cxx: g++ }
+          - { os: ubuntu-latest, cc: clang, cxx: clang++ }
+          - { os: macos-latest,  cc: clang, cxx: clang++ }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: $CC --version && $CXX --version
+      - run: ./release.sh check
+
+  # CMake Release, so NDEBUG is defined; fuzz_nbitq.c undefines it again so
+  # the harness keeps checking.
+  cmake:
+    name: cmake + ctest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./release.sh cmake
+
+  # Freestanding cross-compiles for every embedded target the README quotes
+  # sizes for. Apple clang has every backend built in, which `make targets`
+  # relies on.
+  targets:
+    name: freestanding targets
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./release.sh targets
+
+  # The real coverage-guided engine, which Apple clang lacks, so Linux. With
+  # CI set, release.sh fails rather than skips if libFuzzer is missing.
+  libfuzzer:
+    name: libFuzzer (60s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./release.sh libfuzzer
+
+  # Only on a push to main, only after every job above passed, and only if
+  # the version in nbitq.h has no tag yet. Re-running on a version that is
+  # already tagged is a no-op, so pushing a doc fix to main releases nothing.
+  release:
+    name: tag + GitHub release
+    needs: [make-check, cmake, targets, libfuzzer]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags
+
+      - name: Version (nbitq.h, CMakeLists.txt and CHANGELOG.md must agree)
+        id: version
+        run: echo "version=$(./release.sh version)" >> "$GITHUB_OUTPUT"
+
+      - name: Already tagged?
+        id: tagged
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "v$V already exists; nothing to release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Release notes from CHANGELOG.md
+        if: steps.tagged.outputs.exists == 'false'
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          # The section from "## [V]" up to the next "## [" heading.
+          awk -v v="$V" '
+            /^## \[/ { if (on) exit; on = ($0 ~ "^## \\[" v "\\]") ; next }
+            on { print }
+          ' CHANGELOG.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > notes.md
+          echo "--- notes.md ---"; cat notes.md
+
+      - name: Tag and release
+        if: steps.tagged.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$V" -m "nbitq v$V"
+          git push origin "v$V"
+          gh release create "v$V" --title "nbitq v$V" --notes-file notes.md

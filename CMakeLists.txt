@@ -1,14 +1,14 @@
 # nbitq -- arbitrary-width bit field read/write.
 #
-# This file works two ways on purpose, so splitting the directory out into its
-# own repository needs no edit:
+# This file works two ways:
 #
 #   standalone   cmake -S . -B build && cmake --build build && ctest --test-dir build
 #   vendored     add_subdirectory(nbitq)  from a parent project
 #
 # nbitq has no dependency on anything, and nothing may leak into it from a
-# parent -- that is what keeps the split a copy rather than an untangling.
-# There is also a plain Makefile for building and testing with no CMake at all.
+# parent, so a vendored copy is a plain copy of this directory. triepack
+# (github.com/deftio/triepack) uses nbitq this way. There is also a plain
+# Makefile for building and testing with no CMake at all.
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -19,7 +19,7 @@ if(NOT DEFINED PROJECT_NAME)
 endif()
 
 # Tests are on by default standalone, and follow the parent's choice when
-# vendored. BUILD_TESTS is triepack's spelling; NBITQ_BUILD_TESTS is ours.
+# vendored: NBITQ_BUILD_TESTS if set, else the parent's generic BUILD_TESTS.
 if(DEFINED NBITQ_BUILD_TESTS)
     set(_nbitq_tests ${NBITQ_BUILD_TESTS})
 elseif(DEFINED BUILD_TESTS)

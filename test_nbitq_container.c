@@ -2,7 +2,7 @@
  * @file test_nbitq_container.c
  * @brief Tests for the optional .nbq container.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 

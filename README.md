@@ -1,5 +1,9 @@
 # nbitq
 
+[![CI](https://github.com/deftio/nbitq/actions/workflows/ci.yml/badge.svg)](https://github.com/deftio/nbitq/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/deftio/nbitq?sort=semver)](https://github.com/deftio/nbitq/releases)
+[![License: BSD-2-Clause](https://img.shields.io/badge/license-BSD--2--Clause-blue.svg)](LICENSE.txt)
+
 **Read and write integers of any bit width, at any bit position, in C.**
 
 ```c
@@ -218,11 +222,11 @@ every `#include` of a hosted header — the library then builds
 
 | target | `.text` |
 |---|---:|
-| **Cortex-M3/M4/M7** (Thumb-2) | **4,805 bytes** |
-| Cortex-M0 (Thumb-1) | 5,047 |
-| ARM (v7-A) | 7,275 |
-| AArch64 | 4,375 |
-| x86-64 | 4,531 |
+| **Cortex-M3/M4/M7** (Thumb-2) | **4,843 bytes** |
+| Cortex-M0 (Thumb-1) | 5,085 |
+| ARM (v7-A) | 7,317 |
+| AArch64 | 4,401 |
+| x86-64 | 4,559 |
 
 No stdio, no floating point, no libm, no recursion, no global state — so it
 is reentrant per instance. Reproduce with `make targets`.
@@ -327,7 +331,7 @@ that decodes must re-encode to identical bits; the 64-bit, 32-bit and hi/lo
 paths must agree read-for-read; a failed read must leave the cursor
 untouched; a copied bit run must compare equal to its source.
 
-Measured: 73,943 core checks, 2,065 container checks, and 2,901,892 libFuzzer
+Measured: 73,949 core checks, 2,065 container checks, and 2,901,892 libFuzzer
 runs, all under AddressSanitizer and UndefinedBehaviorSanitizer, all clean.
 
 ## Background
@@ -336,12 +340,29 @@ The API follows `GetNBitQty` / `PutNBitQty` from `dio_BitStream`
 (M. A. Chatterjee, 2000), which packed "a 5-bit symbol, a 12-bit jump offset,
 a 7-bit value into a continuous bit stream, then read them back as native
 integers." That shape has held up for twenty-five years and is kept. The
-implementation is new.
+implementation is new. [triepack](https://github.com/deftio/triepack) vendors
+nbitq.
 
 Three things it does differently, each because the original did not:
 bounds are checked (the original took no buffer length); an out-of-range
 width is an error rather than silently clamped; and the indexed and cursor
 paths share one implementation instead of being written twice.
+
+## Documentation
+
+The website at <https://deftio.github.io/nbitq/> explains what nbitq is for,
+who it is for and how it works, with every example worked down to the byte.
+The same material is in [`docs/`](docs/) as Markdown:
+[what it is](docs/what-is-nbitq.md), [getting started](docs/getting-started.md),
+[how it works](docs/how-it-works.md) and the [API reference](docs/api-reference.md).
+
+## Contributing
+
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers the build, the test expectations and how a release is cut
+(`./release.sh` runs everything CI runs; `./release.sh X.Y.Z` bumps the
+version once it is green). Security issues go through
+[SECURITY.md](SECURITY.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 

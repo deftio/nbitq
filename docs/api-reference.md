@@ -1,0 +1,265 @@
+# API reference
+
+Everything is in `nbitq.h` unless marked **container**, which is
+`nbitq_container.h`. All functions are `extern "C"`.
+
+Parameter conventions, used throughout:
+
+| name | meaning |
+|---|---|
+| `buf` | byte buffer; bit 0 is the MSB of `buf[0]` |
+| `bit_len` | number of valid bits in a buffer being read |
+| `bit_cap` | capacity in bits of a buffer being written |
+| `bit_pos` | position of the first bit of the field |
+| `n` | field width in bits |
+| `base` | varint group width in bits, 2..64 |
+
+## Results
+
+```c
+typedef enum {
+    NBQ_OK            =  0,
+    NBQ_ERR_PARAM     = -1,   /* null pointer, or a width/base out of range     */
+    NBQ_ERR_RANGE     = -2,   /* the operation would cross the end of the buffer */
+    NBQ_ERR_OVERFLOW  = -3,   /* value does not fit the destination type         */
+    NBQ_ERR_MALFORMED = -4,   /* varint overlong, or an impossible encoding      */
+    NBQ_ERR_ALLOC     = -5    /* only from nbq_writer_init_alloc / grow          */
+} nbq_result;
+
+const char *nbq_strerror(nbq_result rc);
+```
+
+Every function that can fail returns an `nbq_result`. On any failure nothing
+is written and no cursor moves.
+
+## Constants and macros
+
+```c
+#define NBQ_VERSION_MAJOR 0
+#define NBQ_VERSION_MINOR 1
+#define NBQ_VERSION_PATCH 0
+#define NBQ_VERSION_STRING "0.1.0"
+#define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
+
+const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
+uint32_t    nbq_version(void);          /* the linked library's NBQ_VERSION */
+
+#define NBQ_MAX_WIDTH        64u   /* widest field a single call moves */
+#define NBQ_VARINT_MIN_BASE  2u
+#define NBQ_VARINT_MAX_BASE  64u
+
+#define NBQ_BYTES_FOR_BITS(bits)   /* bytes needed to hold `bits` bits */
+```
+
+Define `NBQ_NO_MALLOC` before compiling `nbitq.c` to remove
+`nbq_writer_init_alloc` and every hosted `#include`.
+
+## Indexed API
+
+No state, no allocation. Each call is bounds-checked against `bit_len` or
+`bit_cap`.
+
+### Fixed-width integers
+
+```c
+nbq_result nbq_get_u64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned n, uint64_t *out);
+nbq_result nbq_get_s64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned n, int64_t  *out);
+nbq_result nbq_get_u32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned n, uint32_t *out);
+nbq_result nbq_get_s32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned n, int32_t  *out);
+
+nbq_result nbq_put_u64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, uint64_t value);
+nbq_result nbq_put_s64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, int64_t  value);
+nbq_result nbq_put_u32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, uint32_t value);
+nbq_result nbq_put_s32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, int32_t  value);
+```
+
+- `n` is 1..64 for the 64-bit functions and 1..32 for the 32-bit ones;
+  anything else is `NBQ_ERR_PARAM`.
+- The signed `get` functions sign-extend from bit `n-1`. The signed `put`
+  functions write the low `n` bits of the value.
+- `put` leaves bits outside the field untouched.
+- The `u32`/`s32` functions use no 64-bit arithmetic. They are a separate
+  path that produces identical bits, for targets without a native 64-bit
+  type.
+
+### 64-bit values as two halves
+
+```c
+typedef struct { uint32_t hi; uint32_t lo; } nbq_u64_parts;
+
+nbq_result nbq_get_parts(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned n, nbq_u64_parts *out);
+nbq_result nbq_put_parts(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, nbq_u64_parts value);
+```
+
+`n` is 1..64. Same bits as `nbq_get_u64` / `nbq_put_u64`, using only 32-bit
+arithmetic.
+
+### Varints
+
+```c
+nbq_result nbq_get_varint  (const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned base, uint64_t *out, uint64_t *next_pos);
+nbq_result nbq_get_varint_s(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned base, int64_t  *out, uint64_t *next_pos);
+nbq_result nbq_put_varint  (uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned base, uint64_t value, uint64_t *next_pos);
+nbq_result nbq_put_varint_s(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned base, int64_t  value, uint64_t *next_pos);
+
+unsigned nbq_varint_bits  (uint64_t value, unsigned base);
+unsigned nbq_varint_bits_s(int64_t  value, unsigned base);
+```
+
+- A group is `base` bits: `base − 1` payload bits and one continuation bit.
+  Base 8 is LEB128 exactly.
+- `next_pos`, if non-NULL, receives the position just past the varint. A
+  varint's width is not known until it is read, so an indexed caller needs
+  this to advance.
+- Overlong encodings and values wider than 64 bits are `NBQ_ERR_MALFORMED`.
+- The `_s` variants apply zigzag: 0, −1, 1, −2, 2, … map to 0, 1, 2, 3, 4, …
+- `nbq_varint_bits` returns the encoded width without writing, or 0 if
+  `base` is invalid.
+
+### Bit runs
+
+```c
+nbq_result nbq_copy_bits    (const uint8_t *src, uint64_t src_bits, uint64_t src_pos,
+                             uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
+nbq_result nbq_fill_bits    (uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint64_t n, int value);
+nbq_result nbq_compare_bits (const uint8_t *a, uint64_t a_bits, uint64_t a_pos,
+                             const uint8_t *b, uint64_t b_bits, uint64_t b_pos, uint64_t n, int *out);
+nbq_result nbq_popcount_bits(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint64_t n, uint64_t *out);
+```
+
+- `n` may be any length, not just up to 64. `n == 0` succeeds and does
+  nothing.
+- `nbq_copy_bits`: `src` and `dst` may be the same buffer; overlapping
+  ranges are handled correctly.
+- `nbq_fill_bits`: `value` is 0 or nonzero.
+- `nbq_compare_bits`: `*out` is <0, 0 or >0 like `memcmp`, comparing
+  most-significant bit first.
+
+## Cursor API
+
+Thin wrappers over the indexed API. The structs are public; place them
+wherever you like.
+
+```c
+typedef struct {
+    const uint8_t *buf;
+    uint64_t bits;      /* valid bits in buf  */
+    uint64_t pos;       /* next bit to read   */
+} nbq_reader;
+
+typedef struct {
+    uint8_t *buf;
+    uint64_t cap;       /* capacity in bits   */
+    uint64_t pos;       /* next bit to write  */
+    int owns_buf;       /* nonzero if nbq_writer_init_alloc allocated buf */
+} nbq_writer;
+```
+
+### Setup
+
+```c
+nbq_result nbq_reader_init(nbq_reader *r, const uint8_t *buf, uint64_t bit_len);
+nbq_result nbq_writer_init(nbq_writer *w, uint8_t *buf, uint64_t bit_cap);
+nbq_result nbq_writer_init_alloc(nbq_writer *w, uint64_t initial_bits);   /* not under NBQ_NO_MALLOC */
+void       nbq_writer_free(nbq_writer *w);
+```
+
+- `nbq_reader_init` and `nbq_writer_init` allocate nothing. The reader's
+  buffer may be in ROM. A fixed writer never grows; a write past `bit_cap`
+  is `NBQ_ERR_RANGE`.
+- `nbq_writer_init_alloc` gives a writer that owns a heap buffer and doubles
+  it as needed. It is the only allocating function in the library. Release
+  with `nbq_writer_free`, which is a no-op for a writer that does not own
+  its buffer.
+
+### Position
+
+```c
+uint64_t   nbq_reader_remaining(const nbq_reader *r);
+nbq_result nbq_reader_seek (nbq_reader *r, uint64_t bit_pos);   /* refuses pos > bits */
+nbq_result nbq_writer_seek (nbq_writer *w, uint64_t bit_pos);   /* fixed: refuses pos > cap; growing: grows */
+nbq_result nbq_reader_align(nbq_reader *r, unsigned n);
+nbq_result nbq_writer_align(nbq_writer *w, unsigned n);
+```
+
+`align` advances to the next multiple of `n` bits. The writer writes zeros;
+the reader requires the skipped bits to be zero and returns
+`NBQ_ERR_MALFORMED` otherwise. `n` of 8 is byte alignment.
+
+### Sequential reads
+
+Each is the indexed call at `r->pos`, then advance on success.
+
+```c
+nbq_result nbq_read_u64     (nbq_reader *r, unsigned n, uint64_t *out);
+nbq_result nbq_read_s64     (nbq_reader *r, unsigned n, int64_t *out);
+nbq_result nbq_read_u32     (nbq_reader *r, unsigned n, uint32_t *out);
+nbq_result nbq_read_s32     (nbq_reader *r, unsigned n, int32_t *out);
+nbq_result nbq_read_parts   (nbq_reader *r, unsigned n, nbq_u64_parts *out);
+nbq_result nbq_read_varint  (nbq_reader *r, unsigned base, uint64_t *out);
+nbq_result nbq_read_varint_s(nbq_reader *r, unsigned base, int64_t *out);
+nbq_result nbq_read_bits    (nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
+```
+
+### Sequential writes
+
+```c
+nbq_result nbq_write_u64     (nbq_writer *w, unsigned n, uint64_t value);
+nbq_result nbq_write_s64     (nbq_writer *w, unsigned n, int64_t value);
+nbq_result nbq_write_u32     (nbq_writer *w, unsigned n, uint32_t value);
+nbq_result nbq_write_s32     (nbq_writer *w, unsigned n, int32_t value);
+nbq_result nbq_write_parts   (nbq_writer *w, unsigned n, nbq_u64_parts value);
+nbq_result nbq_write_varint  (nbq_writer *w, unsigned base, uint64_t value);
+nbq_result nbq_write_varint_s(nbq_writer *w, unsigned base, int64_t value);
+nbq_result nbq_write_bits    (nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);
+```
+
+A growing writer (from `nbq_writer_init_alloc`) enlarges its buffer when a
+write would pass `cap`; a fixed writer returns `NBQ_ERR_RANGE`.
+
+## Container
+
+`#include "nbitq_container.h"`, compile `nbitq_container.c`. Optional and
+separate on purpose.
+
+```c
+#define NBQ_CONTAINER_VERSION 1
+#define NBQ_FILE_EXTENSION    ".nbq"
+#define NBQ_TYPE_MAX          255u     /* longest type string accepted */
+
+typedef struct {
+    const char    *type;          /* NOT NUL-terminated */
+    size_t         type_len;
+    const uint8_t *payload;
+    uint64_t       payload_bits;
+    uint8_t        version;
+} nbq_container;
+
+nbq_result nbq_container_size (size_t type_len, uint64_t payload_bits, uint64_t *out_bytes);
+nbq_result nbq_container_write(uint8_t *out, size_t out_cap, const char *type, size_t type_len,
+                               const uint8_t *payload, uint64_t payload_bits, size_t *out_len);
+nbq_result nbq_container_read (const uint8_t *buf, size_t len, nbq_container *out);
+nbq_result nbq_container_read_unchecked(const uint8_t *buf, size_t len, nbq_container *out);
+```
+
+- Layout: `"NBQ\1"`, base-8 varint `type_len`, type bytes, base-8 varint
+  `payload_bits`, payload zero-padded to a byte, CRC-64 of everything
+  before it, big-endian.
+- `nbq_container_read` verifies magic, version, every length, the absence
+  of trailing bytes, and the CRC. On success `out` aliases `buf`, which must
+  outlive it; nothing is copied.
+- `nbq_container_read_unchecked` skips only the CRC. Every bounds check
+  still runs.
+- `type_len` may be 0. Longer than `NBQ_TYPE_MAX` is `NBQ_ERR_PARAM`.
+
+### CRC-64/XZ
+
+```c
+#define NBQ_CRC64_INIT UINT64_MAX
+uint64_t nbq_crc64       (const uint8_t *data, size_t len);
+uint64_t nbq_crc64_update(uint64_t crc, const uint8_t *data, size_t len);
+uint64_t nbq_crc64_final (uint64_t crc);
+```
+
+ECMA-182 polynomial, reflected, init and final XOR all ones. Verified
+against `CRC-64/XZ("123456789") == 0x995DC9BBDF1939FA`. Bitwise, no table.

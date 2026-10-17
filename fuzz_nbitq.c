@@ -10,10 +10,14 @@
  *   - a failed read leaves the cursor untouched;
  *   - a copied bit run compares equal to its source.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 
+/* Every property here is an assert(). A Release build defines NDEBUG, which
+   would compile all of them out and leave a harness that passes by checking
+   nothing, so NDEBUG is undefined here regardless of how this file is built. */
+#undef NDEBUG
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>

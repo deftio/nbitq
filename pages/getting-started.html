@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting started with nbitq</title>
+  <meta name="description" content="Install nbitq by copying two files, write your first bit-packed fields, check results, use varints, and build for embedded targets.">
+  <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
+  <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
+  <script src="site.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    var S = nbitqSite;
+
+    S.page('getting-started.html', {
+      title: 'Getting started',
+      subtitle: 'Copy two files. Write a field. Read it back.',
+      content: [
+
+        S.section('Install', [
+          S.p('Copy two files into your project:'),
+          S.code(['nbitq.h', 'nbitq.c']),
+          S.p(['That is the whole installation. There is no configuration and nothing to generate. ', S.c('nbitq.h'), ' is ', S.c('extern "C"'), ', so it works from C++ as well. If you want the optional ', S.c('.nbq'), ' file container, also take ', S.c('nbitq_container.h'), ' and ', S.c('nbitq_container.c'), '. Leave them out and the core is exactly as described here.']),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'With CMake' },
+          S.code([
+            'add_subdirectory(nbitq)                       # vendored',
+            'target_link_libraries(your_target PRIVATE nbitq)'
+          ]),
+          S.p('Or fetched at configure time:'),
+          S.code([
+            'include(FetchContent)',
+            'FetchContent_Declare(nbitq',
+            '    GIT_REPOSITORY https://github.com/deftio/nbitq.git',
+            '    GIT_TAG        v0.1.0)',
+            'FetchContent_MakeAvailable(nbitq)',
+            'target_link_libraries(your_target PRIVATE nbitq)'
+          ]),
+          S.p(['The ', S.c('nbitq'), ' target includes the container. Set ', S.c('NBITQ_BUILD_TESTS=OFF'), ' to skip the tests when vendored; they are on by default standalone.'])
+        ], 'install'),
+
+        S.section('First program', [
+          S.code([
+            '#include <stdio.h>',
+            '#include "nbitq.h"',
+            '',
+            'int main(void)',
+            '{',
+            '    uint8_t buf[4] = {0};',
+            '    const uint64_t cap = sizeof(buf) * 8;   /* capacity in bits */',
+            '',
+            '    /* write a 5-bit, a 12-bit and a 7-bit field, back to back */',
+            '    nbq_writer w;',
+            '    nbq_writer_init(&w, buf, cap);',
+            '    nbq_write_u32(&w, 5,  19);',
+            '    nbq_write_u32(&w, 12, 3000);',
+            '    nbq_write_u32(&w, 7,  0x55);',
+            '',
+            '    printf("%02X %02X %02X  (%llu bits)\\n",',
+            '           buf[0], buf[1], buf[2], (unsigned long long)w.pos);',
+            '',
+            '    /* read them back by position */',
+            '    uint32_t symbol, offset, flags;',
+            '    nbq_get_u32(buf, cap, 0,  5,  &symbol);',
+            '    nbq_get_u32(buf, cap, 5,  12, &offset);',
+            '    nbq_get_u32(buf, cap, 17, 7,  &flags);',
+            '    printf("%u %u 0x%X\\n", symbol, offset, flags);',
+            '    return 0;',
+            '}'
+          ]),
+          S.code([
+            '$ cc -std=c99 -o first first.c nbitq.c && ./first',
+            '9D DC 55  (24 bits)',
+            '19 3000 0x55'
+          ]),
+          S.bits({ alt: 'the three fields written by the first program', bytes: [0x9D, 0xDC, 0x55], fields: [ { name: '19', from: 0, len: 5 }, { name: '3000', from: 5, len: 12 }, { name: '0x55', from: 17, len: 7 } ] }),
+          S.p('Three fields of odd widths in three bytes, no padding, and the middle one crossed a byte boundary without anyone having to think about it.')
+        ], 'first'),
+
+        S.section('Two ways to address a bit', [
+          S.p('Everything comes in two flavours, and they share one implementation.'),
+          bw.makeFeatureGrid({
+            columns: 2, centered: false,
+            features: [
+              { title: 'Indexed', description: 'Takes an explicit position and holds no state. Use it when you know where a field lives: a header with fixed offsets, a table of packed records, a register map.' },
+              { title: 'Cursor', description: 'A reader or writer you own walks forward. Use it when fields come one after another and the position of each depends on what came before, which is most formats.' }
+            ]
+          }),
+          S.code([
+            '/* indexed */',
+            'nbq_get_u32(buf, bit_len, bit_pos, n, &out);    /* n = 1..32 */',
+            'nbq_put_u32(buf, bit_cap, bit_pos, n, value);',
+            '',
+            '/* cursor */',
+            'nbq_reader r;',
+            'nbq_reader_init(&r, buf, bit_len);',
+            'nbq_read_u32(&r, 12, &v);        /* reads at r.pos, then r.pos += 12 */'
+          ]),
+          S.p(['The reader and writer structs are plain and public. Put them on the stack, in static storage, or inside your own object. There is no create/destroy pair to balance, and ', S.c('nbq_reader_init'), ' on a ', S.c('const'), ' buffer in ROM is fine.'])
+        ], 'two-ways'),
+
+        S.section('Checking results', [
+          S.p(['Every function returns an ', S.c('nbq_result'), '. Zero is success; the rest are negative and name the problem:']),
+          S.code([
+            'nbq_result rc = nbq_read_u32(&r, 12, &v);',
+            'if (rc != NBQ_OK) {',
+            '    fprintf(stderr, "read failed: %s\\n", nbq_strerror(rc));',
+            '    /* r.pos is unchanged; nothing was consumed */',
+            '}'
+          ]),
+          S.table([{ key: 'code', label: 'Code' }, { key: 'meaning', label: 'Meaning' }], [
+            { code: 'NBQ_OK', meaning: 'success' },
+            { code: 'NBQ_ERR_PARAM', meaning: 'null pointer, or a width or base out of range' },
+            { code: 'NBQ_ERR_RANGE', meaning: 'the operation would touch a bit at or past the end' },
+            { code: 'NBQ_ERR_OVERFLOW', meaning: 'the value does not fit the destination type' },
+            { code: 'NBQ_ERR_MALFORMED', meaning: 'a varint that is overlong or impossible; a bad container' },
+            { code: 'NBQ_ERR_ALLOC', meaning: 'only from the growing writer, when realloc fails' }
+          ]),
+          S.callout('The length you pass is the one thing the library cannot check for you.', ['It refuses any operation that would cross ', S.c('bit_len'), ', so pass the real number of valid bits, not a round number.'])
+        ], 'results'),
+
+        S.section('A placeholder you fill in later', [
+          S.p('A common pattern: write a length field whose value you do not know until the body is written. The writer can seek backwards:'),
+          S.code([
+            'nbq_writer w;',
+            'nbq_writer_init(&w, buf, cap);',
+            '',
+            'nbq_write_u32(&w, 16, 0);               /* length: placeholder */',
+            'const uint64_t body_start = w.pos;',
+            '',
+            '/* ... write the body ... */',
+            '',
+            'const uint64_t body_bits = w.pos - body_start;',
+            'const uint64_t end = w.pos;',
+            'nbq_writer_seek(&w, 0);',
+            'nbq_write_u32(&w, 16, (uint32_t)body_bits);',
+            'nbq_writer_seek(&w, end);'
+          ])
+        ], 'placeholder'),
+
+        S.section('Varints: pick the group width', [
+          S.p('A varint spends some bits per group on “more follows”. LEB128, as used by protobuf and DWARF, uses 8-bit groups: 7 payload bits plus 1 continuation bit. nbitq lets you choose the group width, which matters when most of your values are small:'),
+          S.code([
+            'nbq_write_varint(&w, 8, 300);     /* bytes AC 02: identical to LEB128 */',
+            'nbq_write_varint(&w, 5, 7);       /* 5 bits                            */',
+            'nbq_write_varint(&w, 5, 100);     /* 10 bits                           */',
+            '',
+            'unsigned bits = nbq_varint_bits(100, 5);    /* == 10, without writing */'
+          ]),
+          S.p([S.c('nbq_varint_bits'), ' lets you measure a real corpus at several bases and pick. Signed varints (', S.c('nbq_write_varint_s'), ') use zigzag, so −1 is as cheap as 0. See ', { t: 'a', a: { href: 'how-it-works.html#varints' }, c: 'How it works §5' }, ' for the bit layout.'])
+        ], 'varints'),
+
+        S.section('Growing writer', [
+          S.p('If you would rather not size an output buffer up front:'),
+          S.code([
+            'nbq_writer w;',
+            'if (nbq_writer_init_alloc(&w, 256) != NBQ_OK) { /* NBQ_ERR_ALLOC */ }',
+            '/* ... writes grow the buffer by doubling as needed ... */',
+            '/* w.buf, w.pos are yours to read; copy out what you need */',
+            'nbq_writer_free(&w);'
+          ]),
+          S.p('This is the only function in the library that allocates. The next section removes it.')
+        ], 'alloc'),
+
+        S.section('Embedded', [
+          S.p(['The core needs nothing from libc. Define ', S.c('NBQ_NO_MALLOC'), ' and the growing writer disappears, along with every ', S.c('#include'), ' of a hosted header:']),
+          S.code([
+            'clang --target=thumbv7em-none-eabi -Oz -std=c99 -ffreestanding -nostdinc \\',
+            '      -isystem "$(clang -print-resource-dir)/include" \\',
+            '      -DNBQ_NO_MALLOC -c nbitq.c'
+          ]),
+          S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
+            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,843' },
+            { target: 'Cortex-M0 (Thumb-1)', text: '5,085' },
+            { target: 'ARM v7-A', text: '7,317' },
+            { target: 'AArch64', text: '4,401' },
+            { target: 'x86-64', text: '4,559' }
+          ]),
+          S.p(['No stdio, no floating point, no libm, no recursion, no global state. Each reader or writer is independent, so the library is reentrant per instance. On a 32-bit CPU with no native 64-bit arithmetic, use the ', S.c('u32'), ' functions for fields up to 32 bits and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' for wider ones. They produce the same bits as the ', S.c('u64'), ' functions; only the arithmetic differs.'])
+        ], 'embedded'),
+
+        S.section('From C++', [
+          S.code([
+            '#include "nbitq.h"       // extern "C" inside',
+            '',
+            'nbq_writer w;',
+            'nbq_writer_init(&w, buf, sizeof(buf) * 8);',
+            'nbq_write_u32(&w, 12, 3000);'
+          ]),
+          S.p([S.c('make cxx'), ' compiles and links both headers from a C++ translation unit to prove this stays true.'])
+        ], 'cxx'),
+
+        S.section('Building and testing the library itself', [
+          S.code([
+            'make check      # tests, ASan+UBSan, fuzz, C++ link, NBQ_NO_MALLOC, code size',
+            'make targets    # freestanding cross-compiles (needs clang)',
+            '',
+            'cmake -S . -B build && cmake --build build && ctest --test-dir build'
+          ]),
+          S.p(['The test suite is exhaustive rather than representative: every width from 1 to 64, every varint base from 2 to 64, every start offset within a byte, truncation at every bit position. See ', { t: 'a', a: { href: S.REPO + '/blob/main/CONTRIBUTING.md' }, c: 'CONTRIBUTING.md' }, ' for what is expected of a change.'])
+        ], 'testing'),
+
+        bw.makeCTA({
+          title: 'Next',
+          actions: [
+            S.linkButton('How it works', 'how-it-works.html'),
+            S.linkButton('API reference', 'api.html', 'outline-primary')
+          ]
+        })
+      ]
+    });
+  </script>
+</body>
+</html>

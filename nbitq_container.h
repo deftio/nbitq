@@ -22,7 +22,7 @@
  * A CRC means the bytes are intact. It never means they are trustworthy:
  * anyone who can hand you a file can hand you a matching checksum.
  *
- * Copyright (c) 2026 M. A. Chatterjee <deftio at deftio dot com>
+ * Copyright (c) 2026 deftio / M. A. Chatterjee <deftio at deftio dot com>
  * BSD-2-Clause -- see LICENSE.txt
  */
 
