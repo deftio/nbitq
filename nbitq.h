@@ -64,8 +64,8 @@ extern "C" {
 
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
-#define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.1.0"
+#define NBQ_VERSION_PATCH 1
+#define NBQ_VERSION_STRING "0.1.1"
 
 /** The three parts packed as 0x00MMmmpp, so versions compare as integers:
  *  `#if NBQ_VERSION >= 0x000200` */
@@ -167,6 +167,71 @@ nbq_result nbq_put_s32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigne
 /** Write @p n bits (1..64) from a hi/lo pair, using only 32-bit arithmetic. */
 nbq_result nbq_put_parts(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned int n,
                          nbq_u64_parts value);
+
+/* ── Floating point ───────────────────────────────────────────────────
+ * A float or double as its IEEE-754 bit pattern in a 32- or 64-bit field,
+ * written MSB first, so the bytes are big-endian at an aligned position.
+ * This is a copy, not a conversion: NaN payloads, signed zeros and denormals
+ * come back bit for bit, and no floating-point arithmetic or runtime is
+ * involved, so a soft-float target pays for a register move and nothing
+ * else. Everything here is static inline: nbitq.c gains no code, and a
+ * program that never calls these links nothing for them.
+ *
+ * The reinterpretation is a union, which C99 defines (6.5.2.3 note 95) and
+ * every C++ compiler this library targets treats the same way; memcpy is
+ * not used because the freestanding build has no <string.h>.
+ */
+static inline uint32_t nbq_f32_bits(float f)
+{
+    union { float f; uint32_t u; } x;
+    x.f = f;
+    return x.u;
+}
+static inline float nbq_f32_from_bits(uint32_t u)
+{
+    union { float f; uint32_t u; } x;
+    x.u = u;
+    return x.f;
+}
+static inline uint64_t nbq_f64_bits(double d)
+{
+    union { double d; uint64_t u; } x;
+    x.d = d;
+    return x.u;
+}
+static inline double nbq_f64_from_bits(uint64_t u)
+{
+    union { double d; uint64_t u; } x;
+    x.u = u;
+    return x.d;
+}
+
+static inline nbq_result nbq_put_f32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, float value)
+{
+    return nbq_put_u32(buf, bit_cap, bit_pos, 32u, nbq_f32_bits(value));
+}
+static inline nbq_result nbq_get_f32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos,
+                                     float *out)
+{
+    uint32_t u;
+    nbq_result rc = nbq_get_u32(buf, bit_len, bit_pos, 32u, &u);
+    if (rc == NBQ_OK && out)
+        *out = nbq_f32_from_bits(u);
+    return rc;
+}
+static inline nbq_result nbq_put_f64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, double value)
+{
+    return nbq_put_u64(buf, bit_cap, bit_pos, 64u, nbq_f64_bits(value));
+}
+static inline nbq_result nbq_get_f64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos,
+                                     double *out)
+{
+    uint64_t u;
+    nbq_result rc = nbq_get_u64(buf, bit_len, bit_pos, 64u, &u);
+    if (rc == NBQ_OK && out)
+        *out = nbq_f64_from_bits(u);
+    return rc;
+}
 
 /* ── Varints at a caller-chosen group width ──────────────────────────── */
 
@@ -315,6 +380,33 @@ nbq_result nbq_write_varint(nbq_writer *w, unsigned int base, uint64_t value);
 nbq_result nbq_write_varint_s(nbq_writer *w, unsigned int base, int64_t value);
 nbq_result nbq_write_bits(nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos,
                           uint64_t n);
+
+/* Floating point at the cursor; see the indexed forms above. A growing
+   writer grows for these exactly as it does for nbq_write_u32/u64. */
+static inline nbq_result nbq_read_f32(nbq_reader *r, float *out)
+{
+    uint32_t u;
+    nbq_result rc = nbq_read_u32(r, 32u, &u);
+    if (rc == NBQ_OK && out)
+        *out = nbq_f32_from_bits(u);
+    return rc;
+}
+static inline nbq_result nbq_read_f64(nbq_reader *r, double *out)
+{
+    uint64_t u;
+    nbq_result rc = nbq_read_u64(r, 64u, &u);
+    if (rc == NBQ_OK && out)
+        *out = nbq_f64_from_bits(u);
+    return rc;
+}
+static inline nbq_result nbq_write_f32(nbq_writer *w, float value)
+{
+    return nbq_write_u32(w, 32u, nbq_f32_bits(value));
+}
+static inline nbq_result nbq_write_f64(nbq_writer *w, double value)
+{
+    return nbq_write_u64(w, 64u, nbq_f64_bits(value));
+}
 
 #ifdef __cplusplus
 }

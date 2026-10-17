@@ -10,6 +10,18 @@ keep each section self-contained.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
+### Added
+- Floating point: `nbq_get_f32` / `nbq_put_f32` / `nbq_get_f64` /
+  `nbq_put_f64` and the cursor forms `nbq_read_f32` / `nbq_write_f32` /
+  `nbq_read_f64` / `nbq_write_f64`. A float or double is stored as its
+  IEEE-754 bit pattern in a 32- or 64-bit field, so NaN payloads and signed
+  zeros survive and no floating-point arithmetic is involved. All are
+  `static inline` in `nbitq.h`; `nbitq.c` is unchanged. The reinterpretation
+  helpers `nbq_f32_bits` / `nbq_f32_from_bits` / `nbq_f64_bits` /
+  `nbq_f64_from_bits` are public.
+
 ## [0.1.0] - 2026-10-16
 
 First release as a standalone repository. The API descends from
@@ -41,5 +53,6 @@ implementation is new.
 - An out-of-range width is an error rather than silently clamped.
 - The indexed and cursor paths share one implementation.
 
-[Unreleased]: https://github.com/deftio/nbitq/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/deftio/nbitq/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/deftio/nbitq/releases/tag/v0.1.1
 [0.1.0]: https://github.com/deftio/nbitq/releases/tag/v0.1.0

@@ -58,8 +58,8 @@ byte 1      0 0 0 1 0 0 0 0      = 0x10
             └ 97: last 4 bits ┘ (unwritten)
 ```
 
-The library handles the boundary. You never need to know which byte you are
-in, and nothing is padded because bytes exist.
+The library handles the boundary; the caller does not track which byte it
+is in, and nothing is padded.
 
 The example from the README, a 5-bit symbol, a 12-bit offset and 7 bits of
 flags:
@@ -127,7 +127,7 @@ does not know which it is; the caller does.
 
 `nbq_put_s32` writes the low `n` bits of the value. It does not check that
 the value fits in `n` bits, because "the low n bits" is a well-defined
-operation and sometimes the one you want.
+operation in its own right.
 
 ## 5. Varints
 
@@ -136,7 +136,7 @@ group has `base` bits: `base − 1` payload bits and one continuation bit
 that says "another group follows". Groups are written least-significant
 payload first.
 
-In nbitq the group width is yours to choose, from 2 to 64. **Base 8 is
+In nbitq the group width is a parameter, 2 to 64. **Base 8 is
 LEB128 exactly**, byte for byte:
 
 ```c
@@ -174,8 +174,8 @@ bits      1 0 0 0 0 0 0 0 0 1 . . . . . .
 bytes     0x80          0x40
 ```
 
-`nbq_varint_bits(value, base)` tells you the cost without writing, so you
-can measure a real corpus at several bases and choose.
+`nbq_varint_bits(value, base)` returns the cost without writing, so a
+corpus can be measured at several bases.
 
 ### Canonical
 
@@ -206,13 +206,13 @@ and destination ranges are handled correctly in both directions, like
 `memmove`. `nbq_compare_bits`, `nbq_fill_bits` and `nbq_popcount_bits` work
 over the same kind of range.
 
-What you extract is just bits. nbitq has no opinion about what they mean;
-hand them to a decompressor, a trie, or your own decoder.
+The result is a run of bits; nbitq does not interpret it.
 
 ## 7. Bounds and atomicity
 
 Every indexed call takes the number of valid bits in the buffer and checks
-the operation against it. The check is written to survive hostile input:
+the operation against it. The check is written so that a position from
+untrusted input cannot wrap:
 
 ```c
 static inline int in_range(uint64_t limit, uint64_t pos, uint64_t n)
@@ -226,8 +226,8 @@ file content cannot wrap around to look valid.
 
 Every operation is all-or-nothing. A varint checks that its whole encoding
 fits before writing any of it; a read that fails leaves the cursor where it
-was. You can try a read, have it fail, and carry on, which is what a parser
-resynchronising on damaged input needs.
+was, so it can be retried, which a parser resynchronising on damaged input
+needs.
 
 ## 8. The container
 
@@ -252,7 +252,8 @@ AE 10          payload, padded to 2 bytes
 ```
 
 Twenty bytes. The type string is free-form and never interpreted; it exists
-so *your* code can dispatch. The container never looks inside the payload.
+so the reading code can dispatch. The container does not look inside the
+payload.
 
 The checksum is CRC-64/XZ (ECMA-182 polynomial, reflected, init and final
 XOR all ones), the same one `xz` uses, and the implementation is verified
@@ -260,9 +261,9 @@ against the published vector `CRC-64/XZ("123456789") == 995DC9BBDF1939FA`.
 It is computed bitwise with no lookup table, because a 2 KB table is a poor
 trade in a library whose whole freestanding build is under 5 KB.
 
-A CRC means the bytes are intact. It never means they are trustworthy:
-anyone who can hand you a file can hand you a matching checksum. If you
-need to detect tampering you need a signature.
+A CRC means the bytes are intact. It does not mean they are trustworthy:
+whoever can supply a file can supply a matching checksum. Detecting
+tampering needs a signature.
 
 ## 9. Values wider than 32 bits, on a 32-bit CPU
 
@@ -286,8 +287,7 @@ nbitq is not optimised. Multi-bit operations loop over single bits rather
 than loading words and masking, which costs roughly 3 to 5× on reads
 against a word-at-a-time implementation.
 
-That is a deliberate first step. There is one place in the code where a bit
-is addressed:
+There is one place in the code where a bit is addressed:
 
 ```c
 static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos)
@@ -298,8 +298,8 @@ static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos)
 
 so there is one place a bit can be addressed wrongly. Everything else is
 built on it. A word-at-a-time path belongs beside this one, cross-checked
-against it by the fuzz harness that already exists, not instead of it. If
-you need codec-grade throughput today, use a codec's reader.
+against it by the existing fuzz harness, not instead of it. For codec-grade
+throughput, use a codec's reader.
 
 ## Next
 

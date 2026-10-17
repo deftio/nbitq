@@ -46,8 +46,11 @@
     try { saved = localStorage.getItem('nbitq-theme'); } catch (e) { /* private window etc. */ }
     if (saved === 'alternate') bw.setThemeMode('alternate');
 
-    // The only custom rules on the site: the bit diagram.
+    // The only custom rules on the site: left-justified button rows and table
+    // headers (BCCL centres both), and the bit diagram.
     bw.injectCSS(bw.css({
+      '.bw_bccl_hero_actions': { 'justify-content': 'flex-start' },
+      '.bw_bccl_table > thead > tr > *': { 'text-align': 'left' },
       '.nq_bits': { 'max-width': '100%', height: 'auto', display: 'block', margin: '0.75rem 0' },
       '.nq_bits text': { 'font-family': '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace' },
       '.nq_bits .nq_cell': { stroke: p.light.border, 'stroke-width': '1' },
@@ -87,7 +90,7 @@
       title: title,
       subtitle: subtitle,
       size: actions ? 'lg' : 'sm',
-      centered: true,
+      centered: false,
       actions: actions
     });
   }
@@ -102,10 +105,10 @@
 
   function footer() {
     return {
-      t: 'footer', a: { class: 'bw_container bw_py_5 bw_text_muted bw_text_center' },
+      t: 'footer', a: { class: 'bw_container bw_py_5 bw_text_muted' },
       c: [
         { t: 'p', a: { class: 'bw_mb_2' }, c: [
-          'nbitq is BSD-2-Clause. © 2026 M. A. Chatterjee. ',
+          'nbitq is BSD-2-Clause. © 2026 deftio / M. A. Chatterjee. ',
           { t: 'a', a: { href: REPO }, c: 'Source on GitHub' }, ' · ',
           { t: 'a', a: { href: REPO + '/issues' }, c: 'Issues' }, ' · ',
           { t: 'a', a: { href: REPO + '/blob/main/SECURITY.md' }, c: 'Security' }
@@ -153,6 +156,16 @@
   }
 
   function p_(content) { return { t: 'p', c: content }; }
+
+  // "Next: a · b · c" at the end of a page, in place of a call-to-action box.
+  function next(links) {
+    var c = ['Next: '];
+    links.forEach(function (l, i) {
+      if (i) c.push(' · ');
+      c.push({ t: 'a', a: { href: l[1] }, c: l[0] });
+    });
+    return { t: 'section', a: { class: 'bw_container bw_py_4' }, c: { t: 'p', c: c } };
+  }
   function ul(items) { return { t: 'ul', c: items.map(function (i) { return { t: 'li', c: i }; }) }; }
   function c_(s) { return { t: 'code', c: s }; }
 
@@ -228,7 +241,7 @@
 
   window.nbitqSite = {
     page: page, section: section, code: code, table: table, callout: callout,
-    bits: bits, linkButton: linkButton, p: p_, ul: ul, c: c_, REPO: REPO,
+    bits: bits, linkButton: linkButton, next: next, p: p_, ul: ul, c: c_, REPO: REPO,
     palette: function () { return p; }
   };
 })();

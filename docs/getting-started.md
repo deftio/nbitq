@@ -1,45 +1,9 @@
 # Getting started
 
-## Install
+## Quickstart
 
-Copy two files into your project:
-
-```
-nbitq.h
-nbitq.c
-```
-
-That is the whole installation. There is no configuration and nothing to
-generate. `nbitq.h` is `extern "C"`, so it works from C++ as well.
-
-If you want the optional `.nbq` file container, also take
-`nbitq_container.h` and `nbitq_container.c`. Leave them out and the core is
-exactly as described here.
-
-### With CMake
-
-Vendored as a subdirectory:
-
-```cmake
-add_subdirectory(nbitq)
-target_link_libraries(your_target PRIVATE nbitq)
-```
-
-Or fetched at configure time:
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(nbitq
-    GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.1.0)
-FetchContent_MakeAvailable(nbitq)
-target_link_libraries(your_target PRIVATE nbitq)
-```
-
-The `nbitq` target includes the container. Set `NBITQ_BUILD_TESTS=OFF` to
-skip building the tests when vendored; they are on by default standalone.
-
-## First program
+Copy `nbitq.h` and `nbitq.c` into the project. There is no configuration
+and nothing to generate. Then, in `first.c`:
 
 ```c
 #include <stdio.h>
@@ -76,12 +40,51 @@ $ cc -std=c99 -o first first.c nbitq.c && ./first
 19 3000 0x55
 ```
 
-Three fields of odd widths in three bytes, no padding, and the middle one
-crossed a byte boundary without anyone having to think about it.
+Three fields in three bytes with no padding. The middle one crosses a byte
+boundary.
 
-## Two ways to address a bit
+```
+byte 0 = 0x9D      byte 1 = 0xDC      byte 2 = 0x55
+1 0 0 1 1 1 0 1    1 1 0 1 1 1 0 0    0 1 0 1 0 1 0 1
+└─ 19 ─┘ └──────── 3000 ────────┘ └──── 0x55 ────┘
+```
 
-Everything comes in two flavours, and they share one implementation.
+Every function returns an `nbq_result`; `NBQ_OK` is zero and the rest are
+negative. The examples above skip the checks for brevity; see
+[Result codes](#result-codes).
+
+## Install
+
+`nbitq.h` is `extern "C"`, so it compiles as C++ as well. The optional
+`.nbq` file container is `nbitq_container.h` and `nbitq_container.c`, a
+separate translation unit.
+
+### With CMake
+
+Vendored as a subdirectory:
+
+```cmake
+add_subdirectory(nbitq)
+target_link_libraries(your_target PRIVATE nbitq)
+```
+
+Or fetched at configure time:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(nbitq
+    GIT_REPOSITORY https://github.com/deftio/nbitq.git
+    GIT_TAG        v0.1.1)
+FetchContent_MakeAvailable(nbitq)
+target_link_libraries(your_target PRIVATE nbitq)
+```
+
+The `nbitq` target includes the container. Set `NBITQ_BUILD_TESTS=OFF` to
+skip building the tests when vendored; they are on by default standalone.
+
+## Indexed and cursor forms
+
+Every operation exists in two forms that share one implementation.
 
 **Indexed** functions take an explicit position and hold no state:
 
@@ -90,10 +93,11 @@ nbq_get_u32(buf, bit_len, bit_pos, n, &out);    /* n = 1..32 */
 nbq_put_u32(buf, bit_cap, bit_pos, n, value);
 ```
 
-Use these when you know where a field lives: a header with fixed offsets, a
-table of packed records you index into, a register map.
+For fields at known positions: a header with fixed offsets, a table of
+packed records, a register map.
 
-**Cursor** functions walk forward through a reader or writer you own:
+**Cursor** functions use a reader or writer struct that holds a position and
+advances it:
 
 ```c
 nbq_reader r;
@@ -101,17 +105,17 @@ nbq_reader_init(&r, buf, bit_len);
 nbq_read_u32(&r, 12, &v);        /* reads at r.pos, then r.pos += 12 */
 ```
 
-Use these when fields come one after another and the position of each
-depends on what came before, which is most formats.
+For fields that follow one another, where each position depends on what
+came before, which is most formats.
 
-The reader and writer structs are plain and public. Put them on the stack,
-in static storage, or inside your own object. There is no create/destroy
-pair to balance, and `nbq_reader_init` on a `const` buffer in ROM is fine.
+The structs are public and plain: on the stack, in static storage, or as a
+member of another struct. There is no create/destroy pair. `nbq_reader_init`
+accepts a `const` buffer, including one in ROM.
 
-## Checking results
+## Result codes
 
 Every function returns an `nbq_result`. Zero is success; the rest are
-negative and name the problem:
+negative:
 
 ```c
 nbq_result rc = nbq_read_u32(&r, 12, &v);
@@ -130,14 +134,14 @@ if (rc != NBQ_OK) {
 | `NBQ_ERR_MALFORMED` | a varint that is overlong or impossible; a bad container |
 | `NBQ_ERR_ALLOC` | only from the growing writer, when `realloc` fails |
 
-The length you pass is the one thing the library cannot check for you. It
-refuses any operation that would cross `bit_len`, so pass the real number
-of valid bits, not a round number.
+`bit_len` is the one input the library cannot check. Every operation is
+checked against the `bit_len` it is given, so pass the real number of valid
+bits, not a round number.
 
-## A placeholder you fill in later
+## Back-patching a length field
 
-A common pattern: write a length field whose value you do not know until the
-body is written. The writer can seek backwards:
+A length field whose value is not known until the body has been written. The
+writer can seek backwards:
 
 ```c
 nbq_writer w;
@@ -155,12 +159,11 @@ nbq_write_u32(&w, 16, (uint32_t)body_bits);
 nbq_writer_seek(&w, end);
 ```
 
-## Varints: pick the group width
+## Varints and group width
 
-A varint spends some bits per group on "more follows". LEB128, as used by
-protobuf and DWARF, uses 8-bit groups: 7 payload bits plus 1 continuation
-bit. nbitq lets you choose the group width, which matters when most of your
-values are small:
+A varint spends some bits per group on a continuation flag. LEB128, as used
+by protobuf and DWARF, uses 8-bit groups: 7 payload bits plus 1. nbitq takes
+the group width as a parameter, which matters when most values are small:
 
 ```c
 nbq_write_varint(&w, 8, 300);     /* bytes AC 02: identical to LEB128   */
@@ -170,23 +173,24 @@ nbq_write_varint(&w, 5, 100);     /* 10 bits                             */
 unsigned bits = nbq_varint_bits(100, 5);    /* == 10, without writing  */
 ```
 
-`nbq_varint_bits` lets you measure a real corpus at several bases and pick.
-Signed varints (`nbq_write_varint_s`) use zigzag, so −1 is as cheap as 0.
+`nbq_varint_bits` returns the cost of a value at a base without writing it,
+so a corpus can be measured at several bases. Signed varints
+(`nbq_write_varint_s`) use zigzag, so −1 costs the same as 0.
 
 ## Growing writer
 
-If you would rather not size an output buffer up front:
+For output whose size is not known up front:
 
 ```c
 nbq_writer w;
 if (nbq_writer_init_alloc(&w, 256) != NBQ_OK) { /* NBQ_ERR_ALLOC */ }
 /* ... writes grow the buffer by doubling as needed ... */
-/* w.buf, w.pos are yours to read; copy out what you need */
+/* w.buf and w.pos are public; copy out the result */
 nbq_writer_free(&w);
 ```
 
-This is the only function in the library that allocates. See the next
-section for removing it.
+`nbq_writer_init_alloc` is the only function in the library that
+allocates.
 
 ## Embedded
 
@@ -207,7 +211,7 @@ clang --target=thumbv7em-none-eabi -Oz -std=c99 -ffreestanding -nostdinc \
 | AArch64 | 4,401 |
 | x86-64 | 4,559 |
 
-No stdio, no floating point, no libm, no recursion, no global state. Each
+No stdio, no floating-point arithmetic, no libm, no recursion, no global state. Each
 reader or writer is independent, so the library is reentrant per instance.
 
 On a 32-bit CPU with no native 64-bit arithmetic, use the `u32` functions

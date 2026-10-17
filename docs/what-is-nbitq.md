@@ -1,8 +1,8 @@
 # What nbitq is
 
 nbitq reads and writes integers of any width, from 1 to 64 bits, at any bit
-position in a byte buffer. That is the whole library: two C99 files, no
-dependencies, about 4.7 KB compiled.
+position in a byte buffer. Two C99 files, no dependencies, about 4.7 KB
+compiled.
 
 ```c
 uint8_t buf[64] = {0};
@@ -12,32 +12,30 @@ uint32_t v;
 nbq_get_u32(buf, 512, 13, 12, &v);                           /* v == 3000 */
 ```
 
-The name comes from the operation it performs: get or put an *n-bit
-quantity*.
+The name is the operation: get or put an *n-bit quantity*.
 
-## The problem
+## What it does
 
-Bytes are the smallest thing C can address, but a great deal of data is not
+Bytes are the smallest unit C can address, but a lot of data is not
 organised in bytes. A compressed file, a network protocol, a hardware
-register map or a succinct data structure will say something like:
+register map or a succinct data structure is specified like this:
 
 > bits 0–4: symbol index · bits 5–16: jump offset · bits 17–23: flags
 
-Three fields, 24 bits, none of them byte-sized and one of them straddling a
-byte boundary. In C you write the shifts and masks yourself:
+Three fields, 24 bits, none of them byte-sized and one straddling a byte
+boundary. In C this is shift-and-mask code written by hand:
 
 ```c
 offset = ((buf[0] & 0x07) << 9) | (buf[1] << 1) | (buf[2] >> 7);
 ```
 
-That line is correct, but it took a minute to write, it is wrong for the
-next field, and nobody reviewing it can tell at a glance what it does. The
-standard library offers nothing better. `memcpy` moves bytes. Struct
-bit-fields have implementation-defined layout, so two compilers can disagree
-about where a field lives. C++ `std::bitset` cannot hand you back an integer
-from an offset.
+That line is correct, but it is wrong for the next field, and a reviewer
+cannot tell at a glance what it does. The standard library does not cover
+it. `memcpy` moves bytes. Struct bit-fields have implementation-defined
+layout, so two compilers can disagree about where a field lives. C++
+`std::bitset` cannot return an integer from an offset.
 
-nbitq is the missing primitive. The same three fields:
+nbitq is that primitive. The same three fields:
 
 ```c
 nbq_reader r;
@@ -49,80 +47,80 @@ nbq_read_u32(&r, 12, &offset);
 nbq_read_u32(&r, 7,  &flags);
 ```
 
-No alignment requirements, no padding, no hand-rolled masks, and every call
-is bounds-checked against the length you passed.
+There is no alignment requirement and no padding, and every call is
+bounds-checked against the length it is given.
 
-## Who it is for
+## Where it fits
 
-**People writing or parsing a bit-packed format.** Codecs, compressed
-containers, succinct data structures such as packed tries and bit vectors,
-anything where fields are sized to their content rather than to a byte.
-nbitq is the layer between "here is a buffer" and "here is a parser": it
-addresses bits, and your code gives them meaning.
+**Bit-packed formats.** Codecs, compressed containers, succinct data
+structures such as packed tries and bit vectors: anything where fields are
+sized to their content rather than to a byte. nbitq is the layer between
+"here is a buffer" and "here is a parser". It addresses bits; the calling
+code gives them meaning.
 
-**People talking to hardware or a wire protocol.** Register dumps, CAN
-frames, radio packets, sensor telemetry. The spec gives you bit offsets and
-widths; nbitq takes bit offsets and widths.
+**Hardware and wire protocols.** Register dumps, CAN frames, radio packets,
+sensor telemetry. A spec gives bit offsets and widths; nbitq takes bit
+offsets and widths.
 
-**Firmware.** Nothing in the core allocates. The reader can point at ROM.
-With one define the library drops every hosted header and builds
-`-ffreestanding` with no libc, in under 5 KB of `.text` on a Cortex-M. There
-is a separate code path that never uses 64-bit arithmetic, for targets where
+**Firmware.** Nothing in the core allocates. The reader accepts a const
+buffer in ROM. With one define the library drops every hosted header and
+builds `-ffreestanding` with no libc, in under 5 KB of `.text` on a
+Cortex-M3. A separate code path uses no 64-bit arithmetic, for targets where
 a `uint64_t` shift is a library call.
 
-**People who need the bytes to be the same everywhere.** The bit order is
-fixed and documented. Varints are canonical, so one value has one encoding.
-Two programs built with different compilers on different machines produce
-identical output for the same input.
+**Portable output.** The bit order is fixed and documented. Varints are
+canonical, so one value has one encoding. Two programs built with different
+compilers on different machines produce identical output for the same
+input.
 
-## Who it is not for
+## Where it does not fit
 
-- **Your fields are whole bytes.** Use `memcpy`.
-- **You want a schema compiler** that reads a format description and
-  generates a parser. [Kaitai Struct](https://kaitai.io/) does that.
-- **You want maximum throughput on bulk integer arrays.** SIMD bit-packing
-  libraries such as [simdcomp](https://github.com/lemire/simdcomp) are far
-  faster at that specific job. nbitq is deliberately not optimised; see
+- **Fields that are whole bytes.** `memcpy` is enough.
+- **A parser generated from a format description.**
+  [Kaitai Struct](https://kaitai.io/) does that.
+- **Bulk integer arrays at high throughput.** SIMD bit-packing libraries
+  such as [simdcomp](https://github.com/lemire/simdcomp) are much faster at
+  that job. nbitq is bit-at-a-time by design; see
   [Performance](how-it-works.md#performance-and-why-it-is-bit-at-a-time).
-- **You are in Python.** [bitstring](https://bitstring.readthedocs.io/) is
-  more capable and more ergonomic there.
+- **Python.** [bitstring](https://bitstring.readthedocs.io/) is more capable
+  there.
 
-## What it gives you
+## Functions
 
-Beyond fixed-width get and put, the library covers the things a bit-packed
-format needs next:
+Beyond fixed-width get and put, the library covers what a bit-packed format
+needs next:
 
-| Need | nbitq |
+| Operation | nbitq |
 |---|---|
 | A field at a known position | `nbq_get_u32` / `nbq_put_u32`, and 64-bit and signed variants |
 | A sequence of fields | `nbq_reader` / `nbq_writer` cursors, with seek and align |
 | A small number in few bits | varints at any group width from 2 to 64 bits; base 8 is LEB128 exactly |
-| A span of bits moved somewhere else | `nbq_copy_bits` from any offset to any offset, overlap-safe |
+| A span of bits moved elsewhere | `nbq_copy_bits` from any offset to any offset, overlap-safe |
 | Compare, fill, count | `nbq_compare_bits`, `nbq_fill_bits`, `nbq_popcount_bits` |
+| A float or double | `nbq_get_f32` / `nbq_put_f32`, `nbq_get_f64` / `nbq_put_f64`: IEEE-754 bit patterns, header-only |
 | 64-bit values on a 32-bit CPU | `nbq_get_parts` / `nbq_put_parts`, using only 32-bit arithmetic |
-| Hand a bit run to another program | the optional `.nbq` container: length, type string, CRC-64 |
+| A bit run stored in a file | the optional `.nbq` container: length, type string, CRC-64 |
 
-## What you can rely on
+## Fixed conventions
 
 - **Bit 0 is the most significant bit of byte 0**, and fields are written
-  most-significant bit first. This never changes.
+  most-significant bit first. This does not change.
 - **Every operation is all-or-nothing.** On failure nothing is written and no
-  cursor moves, so you can try a read, have it fail, and carry on.
+  cursor moves, so a failed read can be retried.
 - **Bad input is refused, not approximated.** An out-of-range width or
   position, a varint longer than 64 bits can hold, or an overlong varint
-  encoding all return errors.
-- **Varints are canonical.** One value encodes exactly one way.
+  encoding is an error.
+- **Varints are canonical.** One value has exactly one encoding.
 
 ## Lineage
 
 The API follows `GetNBitQty` / `PutNBitQty` from dio_BitStream
 (M. A. Chatterjee, 2000), which packed "a 5-bit symbol, a 12-bit jump offset,
 a 7-bit value into a continuous bit stream, then read them back as native
-integers." That shape has held up for twenty-five years and is kept. The
-implementation is new, and three things are different because the original
-did not do them: bounds are checked, an out-of-range width is an error rather
-than silently clamped, and the indexed and cursor paths share one
-implementation instead of being written twice.
+integers." That shape is kept. The implementation is new, and three things
+differ because the original did not do them: bounds are checked, an
+out-of-range width is an error rather than silently clamped, and the indexed
+and cursor paths share one implementation instead of being written twice.
 
 ## Next
 

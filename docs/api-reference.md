@@ -14,6 +14,74 @@ Parameter conventions, used throughout:
 | `n` | field width in bits |
 | `base` | varint group width in bits, 2..64 |
 
+## Overview
+
+Every function, by group. The sections below give signatures and the
+details.
+
+**Version and errors**
+
+| Function | Does |
+|---|---|
+| `nbq_version_string()` / `nbq_version()` | Version of the library that was linked, as a string and as `(major << 16) \| (minor << 8) \| patch` |
+| `nbq_strerror(rc)` | Text for a result code |
+
+**Indexed fixed-width integers** (buffer, length, position; no state)
+
+| Function | Does |
+|---|---|
+| `nbq_get_u64` / `nbq_get_u32` | Read `n` bits at `bit_pos` as an unsigned integer, MSB first |
+| `nbq_get_s64` / `nbq_get_s32` | The same, sign-extended from bit `n−1` |
+| `nbq_put_u64` / `nbq_put_u32` | Write the low `n` bits of a value at `bit_pos`; bits outside the field are untouched |
+| `nbq_put_s64` / `nbq_put_s32` | The same for a signed value (two's complement in `n` bits) |
+| `nbq_get_parts` / `nbq_put_parts` | Up to 64 bits as a `{hi, lo}` pair of 32-bit halves, using no 64-bit arithmetic |
+| `nbq_get_f32` / `nbq_put_f32` / `nbq_get_f64` / `nbq_put_f64` | A float or double as its IEEE-754 bit pattern in a 32- or 64-bit field; header-only, no floating-point arithmetic |
+
+**Indexed varints**
+
+| Function | Does |
+|---|---|
+| `nbq_get_varint` / `nbq_put_varint` | Decode or encode an unsigned varint with `base`-bit groups; `next_pos` receives the end |
+| `nbq_get_varint_s` / `nbq_put_varint_s` | The same with zigzag for signed values |
+| `nbq_varint_bits` / `nbq_varint_bits_s` | Encoded width of a value at a base, without writing |
+
+**Bit runs** (any length)
+
+| Function | Does |
+|---|---|
+| `nbq_copy_bits` | Move `n` bits from one offset to another, in the same or another buffer; overlap-safe |
+| `nbq_fill_bits` | Set `n` bits to 0 or 1 |
+| `nbq_compare_bits` | Compare two runs, MSB first, like `memcmp` |
+| `nbq_popcount_bits` | Count the 1 bits in a run |
+
+**Cursor** (a reader or writer struct holding a position)
+
+| Function | Does |
+|---|---|
+| `nbq_reader_init` / `nbq_writer_init` | Point a cursor at caller-owned storage; allocates nothing |
+| `nbq_writer_init_alloc` / `nbq_writer_free` | A writer over a heap buffer that doubles as needed; the only allocation in the library |
+| `nbq_reader_remaining` | Bits not yet read |
+| `nbq_reader_seek` / `nbq_writer_seek` | Move the position; a fixed writer refuses a position past its capacity |
+| `nbq_reader_align` / `nbq_writer_align` | Advance to the next multiple of `n` bits; the writer writes zeros, the reader requires zeros |
+| `nbq_read_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` | The indexed get at the cursor position, then advance |
+| `nbq_write_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` | The indexed put at the cursor position, then advance |
+| `nbq_read_bits` / `nbq_write_bits` | `nbq_copy_bits` to or from the cursor position, then advance |
+| `nbq_read_f32` `_f64` / `nbq_write_f32` `_f64` | The float forms at the cursor position, then advance |
+
+**Container** (`nbitq_container.h`, optional)
+
+| Function | Does |
+|---|---|
+| `nbq_container_size` | Bytes a container of a given type length and payload length occupies |
+| `nbq_container_write` | Write magic, type, length, payload and CRC-64 into a buffer |
+| `nbq_container_read` | Parse and verify a container; the result aliases the input |
+| `nbq_container_read_unchecked` | The same without the CRC check |
+| `nbq_crc64` / `nbq_crc64_update` / `nbq_crc64_final` | CRC-64/XZ, one-shot or incremental |
+
+Get and put exist in both the indexed and the cursor form. There is no
+insert; see [Not provided](#not-provided) for the way to do it with what is
+here.
+
 ## Results
 
 ```c
@@ -38,7 +106,7 @@ is written and no cursor moves.
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
 #define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.1.0"
+#define NBQ_VERSION_STRING "0.1.1"
 #define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
 
 const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
@@ -94,6 +162,33 @@ nbq_result nbq_put_parts(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsig
 `n` is 1..64. Same bits as `nbq_get_u64` / `nbq_put_u64`, using only 32-bit
 arithmetic.
 
+### Floating point
+
+```c
+static inline nbq_result nbq_get_f32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, float  *out);
+static inline nbq_result nbq_put_f32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, float  value);
+static inline nbq_result nbq_get_f64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, double *out);
+static inline nbq_result nbq_put_f64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, double value);
+
+static inline uint32_t nbq_f32_bits(float f);          /* the reinterpretation, both ways */
+static inline float    nbq_f32_from_bits(uint32_t u);
+static inline uint64_t nbq_f64_bits(double d);
+static inline double   nbq_f64_from_bits(uint64_t u);
+```
+
+- A `float` or `double` is stored as its IEEE-754 bit pattern in a 32- or
+  64-bit field, MSB first. At a byte-aligned position the bytes are
+  big-endian: `3.14159f` is `40 49 0F D0`.
+- A copy, not a conversion. NaN payloads, signalling NaNs, signed zeros and
+  denormals round-trip bit for bit. `nbq_put_f32(.., f)` writes exactly what
+  `nbq_put_u32(.., 32, nbq_f32_bits(f))` writes.
+- No floating-point arithmetic or runtime is involved, so a core without an
+  FPU pays for a register move. The functions are `static inline` in the
+  header; `nbitq.c` contains no floating-point code and a program that never
+  calls them links nothing for them.
+- The position need not be byte-aligned. On a 32-bit target, `nbq_put_parts`
+  with `nbq_f64_bits` split into halves avoids 64-bit arithmetic.
+
 ### Varints
 
 ```c
@@ -137,8 +232,8 @@ nbq_result nbq_popcount_bits(const uint8_t *buf, uint64_t bit_len, uint64_t bit_
 
 ## Cursor API
 
-Thin wrappers over the indexed API. The structs are public; place them
-wherever you like.
+Thin wrappers over the indexed API. The structs are public and can live
+anywhere.
 
 ```c
 typedef struct {
@@ -199,6 +294,9 @@ nbq_result nbq_read_parts   (nbq_reader *r, unsigned n, nbq_u64_parts *out);
 nbq_result nbq_read_varint  (nbq_reader *r, unsigned base, uint64_t *out);
 nbq_result nbq_read_varint_s(nbq_reader *r, unsigned base, int64_t *out);
 nbq_result nbq_read_bits    (nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
+
+static inline nbq_result nbq_read_f32(nbq_reader *r, float  *out);   /* advance 32 */
+static inline nbq_result nbq_read_f64(nbq_reader *r, double *out);   /* advance 64 */
 ```
 
 ### Sequential writes
@@ -212,10 +310,52 @@ nbq_result nbq_write_parts   (nbq_writer *w, unsigned n, nbq_u64_parts value);
 nbq_result nbq_write_varint  (nbq_writer *w, unsigned base, uint64_t value);
 nbq_result nbq_write_varint_s(nbq_writer *w, unsigned base, int64_t value);
 nbq_result nbq_write_bits    (nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);
+
+static inline nbq_result nbq_write_f32(nbq_writer *w, float  value);
+static inline nbq_result nbq_write_f64(nbq_writer *w, double value);
 ```
 
 A growing writer (from `nbq_writer_init_alloc`) enlarges its buffer when a
 write would pass `cap`; a fixed writer returns `NBQ_ERR_RANGE`.
+
+## Not provided
+
+### Insert and delete
+
+Insert is not in the API because it is a short composition of what is. The
+example was run against the library.
+
+`put` overwrites in place. To insert a field, open a gap with
+`nbq_copy_bits`, which handles the overlap, then put into it. `len` is the
+number of bits in use; `cap` is the buffer's capacity.
+
+```c
+static nbq_result insert_u32(uint8_t *buf, uint64_t cap, uint64_t *len,
+                             uint64_t pos, unsigned n, uint32_t value)
+{
+    nbq_result rc = nbq_copy_bits(buf, cap, pos, buf, cap, pos + n, *len - pos);
+    if (rc != NBQ_OK) return rc;              /* no room: nothing moved */
+    rc = nbq_put_u32(buf, cap, pos, n, value);
+    if (rc != NBQ_OK) return rc;
+    *len += n;
+    return NBQ_OK;
+}
+
+static nbq_result delete_bits(uint8_t *buf, uint64_t cap, uint64_t *len,
+                              uint64_t pos, unsigned n)
+{
+    nbq_result rc = nbq_copy_bits(buf, cap, pos + n, buf, cap, pos, *len - pos - n);
+    if (rc != NBQ_OK) return rc;
+    *len -= n;
+    return NBQ_OK;
+}
+```
+
+Starting from the 24-bit example `9D DC 55` (fields 19, 3000, 0x55),
+inserting the 3-bit value 6 at bit 5 gives `9E BB 8A A0`, 27 bits, and the
+fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores
+`9D DC 55`. An insert that would pass `cap` fails with `NBQ_ERR_RANGE` and
+moves nothing. Insertion is linear in the number of bits after `pos`.
 
 ## Container
 

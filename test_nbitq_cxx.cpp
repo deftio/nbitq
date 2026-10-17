@@ -18,11 +18,16 @@ int main()
     bool ok = true;
 
     // core: cursor write, indexed read back
-    uint8_t bits[8] = {0};
+    uint8_t bits[16] = {0};   // 12 + 25 + 32 bits in use
     nbq_writer w;
     ok = ok && nbq_writer_init(&w, bits, sizeof(bits) * 8) == NBQ_OK;
     ok = ok && nbq_write_u32(&w, 12, 3000) == NBQ_OK;
     ok = ok && nbq_write_varint(&w, 5, 123456) == NBQ_OK;
+    ok = ok && nbq_write_f32(&w, 3.14159f) == NBQ_OK;   // header-only inline, from C++
+
+    float f = 0.0f;
+    ok = ok && nbq_get_f32(bits, sizeof(bits) * 8, w.pos - 32, &f) == NBQ_OK;
+    ok = ok && nbq_f32_bits(f) == 0x40490FD0u;
 
     uint32_t v = 0;
     ok = ok && nbq_get_u32(bits, sizeof(bits) * 8, 0, 12, &v) == NBQ_OK;

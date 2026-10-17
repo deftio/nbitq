@@ -14,7 +14,7 @@ cmake_minimum_required(VERSION 3.16)
 
 # Only declare a project when built standalone; a parent has its own.
 if(NOT DEFINED PROJECT_NAME)
-    project(nbitq VERSION 0.1.0 LANGUAGES C CXX)
+    project(nbitq VERSION 0.1.1 LANGUAGES C CXX)
     set(NBITQ_STANDALONE TRUE)
 endif()
 

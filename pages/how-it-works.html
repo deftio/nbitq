@@ -8,6 +8,8 @@
   <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
   <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
   <script src="site.js"></script>
+  <script data-goatcounter="https://deftio.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -16,13 +18,13 @@
 
     S.page('how-it-works.html', {
       title: 'How it works',
-      subtitle: 'What nbitq does with the bits, from first principles and down to the byte. Every byte value on this page was produced by running the library.',
+      subtitle: 'Bit numbering, packing, signed fields, varints, bit runs, bounds checking and the container. Every byte value on this page was produced by running the library.',
       content: [
 
         S.section('1. Bit numbering: MSB first', [
           S.p('Within a byte, nbitq numbers bits from the most significant (leftmost) to the least significant (rightmost). Bit 0 of the buffer is the most significant bit of byte 0; bit 8 is the most significant bit of byte 1; and so on.'),
           S.bits({ alt: 'bit indices of the byte 0xA5', bytes: [0xA5], fields: [ { name: 'bit 0 has weight 128, bit 7 has weight 1', from: 0, len: 8 } ] }),
-          S.p('A field is written most-significant bit first, so the first bit of a value lands at the lowest bit index. This matches network byte order and most codec bit readers; DEFLATE, which packs LSB-first, is the well-known exception. It is the one convention that, left ambiguous, makes two implementations disagree about every file, so it is fixed and will not change.')
+          S.p('A field is written most-significant bit first, so the first bit of a value lands at the lowest bit index. This matches network byte order and most codec bit readers; DEFLATE, which packs LSB-first, is the well-known exception. The convention is fixed.')
         ], 'numbering'),
 
         S.section('2. Packing fields', [
@@ -38,7 +40,7 @@
             'nbq_write_u32(&w, 7, 97);    /* 1100001 -> bits 5..11 */'
           ]),
           S.bits({ alt: '21 in 5 bits then 97 in 7 bits across a byte boundary', bytes: [0xAE, 0x10], fields: [ { name: '21', from: 0, len: 5 }, { name: '97 (crosses the boundary)', from: 5, len: 7 } ] }),
-          S.p('The library handles the boundary. You never need to know which byte you are in, and nothing is padded because bytes exist. The example from the home page, a 5-bit symbol, a 12-bit offset and 7 bits of flags:'),
+          S.p('The library handles the boundary; the caller does not track which byte it is in, and nothing is padded. The example from the home page, a 5-bit symbol, a 12-bit offset and 7 bits of flags:'),
           S.code([
             'nbq_write_u32(&w, 5,  19);',
             'nbq_write_u32(&w, 12, 3000);',
@@ -73,11 +75,11 @@
             'int32_t  s; nbq_get_s32(buf, cap, 0, 4, &s);   /* s == -3 */',
             'uint32_t u; nbq_get_u32(buf, cap, 0, 4, &u);   /* u == 13 */'
           ]),
-          S.p(['The same four bits read as signed or unsigned give −3 or 13. The buffer does not know which it is; the caller does. ', S.c('nbq_put_s32'), ' writes the low ', S.c('n'), ' bits of the value and does not check that it fits, because “the low n bits” is a well-defined operation and sometimes the one you want.'])
+          S.p(['The same four bits read as signed or unsigned give −3 or 13. The buffer does not know which it is; the caller does. ', S.c('nbq_put_s32'), ' writes the low ', S.c('n'), ' bits of the value and does not check that it fits, because “the low n bits” is a well-defined operation in its own right.'])
         ], 'signed'),
 
         S.section('5. Varints', [
-          S.p(['A varint stores a number in as many fixed-size groups as it needs. Each group has ', S.c('base'), ' bits: ', S.c('base − 1'), ' payload bits and one continuation bit that says “another group follows”. Groups are written least-significant payload first. In nbitq the group width is yours to choose, from 2 to 64. ', { t: 'strong', c: 'Base 8 is LEB128 exactly' }, ', byte for byte:']),
+          S.p(['A varint stores a number in as many fixed-size groups as it needs. Each group has ', S.c('base'), ' bits: ', S.c('base − 1'), ' payload bits and one continuation bit that says “another group follows”. Groups are written least-significant payload first. In nbitq the group width is a parameter, 2 to 64. ', { t: 'strong', c: 'Base 8 is LEB128 exactly' }, ', byte for byte:']),
           S.code(['nbq_put_varint(buf, cap, 0, 8, 300, &next);']),
           S.bits({ alt: '300 as a base-8 varint', bytes: [0xAC, 0x02], fields: [
             { name: 'more', from: 0, len: 1 }, { name: 'low 7 bits of 300', from: 1, len: 7 },
@@ -97,9 +99,9 @@
             { name: 'more', from: 0, len: 1 }, { name: '0000', from: 1, len: 4 },
             { name: 'end', from: 5, len: 1 }, { name: '0001', from: 6, len: 4 }
           ] }),
-          S.p([S.c('nbq_varint_bits(value, base)'), ' tells you the cost without writing, so you can measure a real corpus at several bases and choose.']),
+          S.p([S.c('nbq_varint_bits(value, base)'), ' returns the cost without writing, so a corpus can be measured at several bases.']),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Canonical' },
-          S.p(['One value has exactly one encoding. An encoder never emits a trailing all-zero group with the continuation bit set, and the decoder refuses to accept one: ', S.c('0x80 0x00'), ' in base 8 is ', S.c('NBQ_ERR_MALFORMED'), ', not another way to write zero. A varint whose payload would exceed 64 bits is also refused. This is what lets two programs write the same data and produce the same bytes.']),
+          S.p(['One value has exactly one encoding. An encoder never emits a trailing all-zero group with the continuation bit set, and the decoder refuses to accept one: ', S.c('0x80 0x00'), ' in base 8 is ', S.c('NBQ_ERR_MALFORMED'), ', not another way to write zero. A varint whose payload would exceed 64 bits is also refused. Two programs writing the same data therefore produce the same bytes.']),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Signed' },
           S.p([S.c('nbq_put_varint_s'), ' applies zigzag first: 0 → 0, −1 → 1, 1 → 2, −2 → 3, and so on. Small negative numbers stay small. Measure signed data with ', S.c('nbq_varint_bits_s'), ', because the zigzag changes the answer.'])
         ], 'varints'),
@@ -107,11 +109,11 @@
         S.section('6. Bit runs', [
           S.p([S.c('nbq_copy_bits'), ' moves ', S.c('n'), ' bits from any bit offset in one buffer to any bit offset in another, or in the same buffer:']),
           S.code(['nbq_copy_bits(src, src_bits, 3, dst, dst_bits, 11, 157);   /* 157 bits, 3 -> 11 */']),
-          S.p(['Neither end needs to be byte-aligned. Within one buffer, overlapping source and destination ranges are handled correctly in both directions, like ', S.c('memmove'), '. ', S.c('nbq_compare_bits'), ', ', S.c('nbq_fill_bits'), ' and ', S.c('nbq_popcount_bits'), ' work over the same kind of range. What you extract is just bits. nbitq has no opinion about what they mean; hand them to a decompressor, a trie, or your own decoder.'])
+          S.p(['Neither end needs to be byte-aligned. Within one buffer, overlapping source and destination ranges are handled correctly in both directions, like ', S.c('memmove'), '. ', S.c('nbq_compare_bits'), ', ', S.c('nbq_fill_bits'), ' and ', S.c('nbq_popcount_bits'), ' work over the same kind of range. The result is a run of bits; nbitq does not interpret it.'])
         ], 'runs'),
 
         S.section('7. Bounds and atomicity', [
-          S.p('Every indexed call takes the number of valid bits in the buffer and checks the operation against it. The check is written to survive hostile input:'),
+          S.p('Every indexed call takes the number of valid bits in the buffer and checks the operation against it. The check is written so that a position from untrusted input cannot wrap:'),
           S.code([
             'static inline int in_range(uint64_t limit, uint64_t pos, uint64_t n)',
             '{',
@@ -119,11 +121,11 @@
             '}'
           ]),
           S.p([S.c('pos + n'), ' is never computed, so a position near ', S.c('UINT64_MAX'), ' that came from file content cannot wrap around to look valid.']),
-          S.p('Every operation is all-or-nothing. A varint checks that its whole encoding fits before writing any of it; a read that fails leaves the cursor where it was. You can try a read, have it fail, and carry on, which is what a parser resynchronising on damaged input needs.')
+          S.p('Every operation is all-or-nothing. A varint checks that its whole encoding fits before writing any of it; a read that fails leaves the cursor where it was, so it can be retried, which a parser resynchronising on damaged input needs.')
         ], 'bounds'),
 
         S.section('8. The container', [
-          S.p('The core has no file format, and for most uses that is right. But a bare run of 1,234 bits cannot say how long it is or what it was, so an optional wrapper exists in a separate translation unit:'),
+          S.p('The core has no file format. A bare run of 1,234 bits cannot say how long it is or what it was, so an optional wrapper exists in a separate translation unit:'),
           S.code([
             '[ "NBQ\\1" ][ varint type_len ][ type_str ][ varint n_bits ]',
             '[ payload, zero-padded to a byte ][ CRC-64 ]'
@@ -137,9 +139,9 @@
             { bytes: 'AE 10', meaning: 'payload, padded to 2 bytes' },
             { bytes: '45 42 6B F9 29 F4 61 30', meaning: 'CRC-64 of the 12 bytes above, big-endian' }
           ]),
-          S.p(['Twenty bytes. The type string is free-form and never interpreted; it exists so ', { t: 'em', c: 'your' }, ' code can dispatch. The container never looks inside the payload.']),
+          S.p('Twenty bytes. The type string is free-form and never interpreted; it exists so the reading code can dispatch. The container does not look inside the payload.'),
           S.p(['The checksum is CRC-64/XZ (ECMA-182 polynomial, reflected, init and final XOR all ones), the same one ', S.c('xz'), ' uses, verified against the published vector ', S.c('CRC-64/XZ("123456789") == 995DC9BBDF1939FA'), '. It is computed bitwise with no lookup table, because a 2 KB table is a poor trade in a library whose whole freestanding build is under 5 KB.']),
-          S.callout('A CRC means the bytes are intact.', 'It never means they are trustworthy: anyone who can hand you a file can hand you a matching checksum. If you need to detect tampering you need a signature.', 'warning')
+          S.callout('A CRC means the bytes are intact.', 'It does not mean they are trustworthy: whoever can supply a file can supply a matching checksum. Detecting tampering needs a signature.', 'warning')
         ], 'container'),
 
         S.section('9. Values wider than 32 bits, on a 32-bit CPU', [
@@ -152,23 +154,17 @@
         ], 'parts'),
 
         S.section('Performance, and why it is bit-at-a-time', [
-          S.p('nbitq is not optimised. Multi-bit operations loop over single bits rather than loading words and masking, which costs roughly 3 to 5× on reads against a word-at-a-time implementation. That is a deliberate first step. There is one place in the code where a bit is addressed:'),
+          S.p('nbitq is not optimised. Multi-bit operations loop over single bits rather than loading words and masking, which costs roughly 3 to 5× on reads against a word-at-a-time implementation. There is one place in the code where a bit is addressed:'),
           S.code([
             'static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos)',
             '{',
             '    return (buf[pos >> 3] >> (7u - (pos & 7u))) & 1u;',
             '}'
           ]),
-          S.p('so there is one place a bit can be addressed wrongly. Everything else is built on it. A word-at-a-time path belongs beside this one, cross-checked against it by the fuzz harness that already exists, not instead of it. If you need codec-grade throughput today, use a codec’s reader.')
+          S.p('so there is one place a bit can be addressed wrongly. Everything else is built on it. A word-at-a-time path belongs beside this one, cross-checked against it by the existing fuzz harness, not instead of it. For codec-grade throughput, use a codec’s reader.')
         ], 'performance'),
 
-        bw.makeCTA({
-          title: 'Next',
-          actions: [
-            S.linkButton('Getting started', 'getting-started.html'),
-            S.linkButton('API reference', 'api.html', 'outline-primary')
-          ]
-        })
+        S.next([['Getting started', 'getting-started.html'], ['API reference', 'api.html']])
       ]
     });
   </script>

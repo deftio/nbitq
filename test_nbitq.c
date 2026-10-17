@@ -498,6 +498,85 @@ static void test_version_is_self_reported(void)
     CHECK((nbq_version() & 0xFFu) == (uint32_t)NBQ_VERSION_PATCH, "nbq_version() patch");
 }
 
+/* Floats are bit patterns: every class of value, including the ones that
+   arithmetic would alter (NaN payloads, signalling NaNs, signed zero,
+   denormals), must come back identical, at every offset within a byte, and
+   the put must be byte-for-byte what nbq_put_u32/u64 of the pattern writes. */
+static void test_float_is_a_bit_copy(void)
+{
+    static const uint32_t f32[] = {
+        0x00000000u, 0x80000000u,              /* +0, -0 */
+        0x3F800000u, 0xBF800000u, 0x40490FD0u, /* 1, -1, 3.14159 */
+        0x00800000u, 0x00000001u, 0x807FFFFFu, /* FLT_MIN, smallest denormal, -largest denormal */
+        0x7F7FFFFFu, 0x7F800000u, 0xFF800000u, /* FLT_MAX, +inf, -inf */
+        0x7FC00000u, 0x7F800001u, 0xFFC0BEEFu  /* quiet NaN, signalling NaN, NaN with payload */
+    };
+    static const uint64_t f64[] = {
+        0x0000000000000000ull, 0x8000000000000000ull,
+        0x3FF0000000000000ull, 0xBFF0000000000000ull, 0x400921FB54442D18ull,
+        0x0010000000000000ull, 0x0000000000000001ull, 0x800FFFFFFFFFFFFFull,
+        0x7FEFFFFFFFFFFFFFull, 0x7FF0000000000000ull, 0xFFF0000000000000ull,
+        0x7FF8000000000000ull, 0x7FF0000000000001ull, 0xFFF8DEADBEEF0001ull
+    };
+    uint8_t buf[32], ref[32];
+    const uint64_t cap = sizeof(buf) * 8;
+
+    for (size_t i = 0; i < sizeof(f32) / sizeof(f32[0]); i++) {
+        for (uint64_t pos = 0; pos < 16; pos++) {
+            float f = nbq_f32_from_bits(f32[i]), g = 0.0f;
+            uint32_t u = 0;
+            memset(buf, 0xA5, sizeof(buf));
+            memset(ref, 0xA5, sizeof(ref));
+            CHECK(nbq_f32_bits(f) == f32[i], "f32 pattern %08X survives the union", f32[i]);
+            CHECK(nbq_put_f32(buf, cap, pos, f) == NBQ_OK, "put_f32 %08X at %llu", f32[i], (unsigned long long)pos);
+            CHECK(nbq_put_u32(ref, cap, pos, 32, f32[i]) == NBQ_OK, "ref put");
+            CHECK(memcmp(buf, ref, sizeof(buf)) == 0, "put_f32 == put_u32 of the pattern (%08X at %llu)", f32[i], (unsigned long long)pos);
+            CHECK(nbq_get_f32(buf, cap, pos, &g) == NBQ_OK, "get_f32");
+            CHECK(nbq_f32_bits(g) == f32[i], "get_f32 round trip %08X at %llu", f32[i], (unsigned long long)pos);
+            CHECK(nbq_get_u32(buf, cap, pos, 32, &u) == NBQ_OK && u == f32[i], "get_u32 sees the pattern");
+        }
+    }
+    for (size_t i = 0; i < sizeof(f64) / sizeof(f64[0]); i++) {
+        for (uint64_t pos = 0; pos < 16; pos++) {
+            double d = nbq_f64_from_bits(f64[i]), e = 0.0;
+            memset(buf, 0x5A, sizeof(buf));
+            memset(ref, 0x5A, sizeof(ref));
+            CHECK(nbq_f64_bits(d) == f64[i], "f64 pattern %016llX survives the union", (unsigned long long)f64[i]);
+            CHECK(nbq_put_f64(buf, cap, pos, d) == NBQ_OK, "put_f64");
+            CHECK(nbq_put_u64(ref, cap, pos, 64, f64[i]) == NBQ_OK, "ref put");
+            CHECK(memcmp(buf, ref, sizeof(buf)) == 0, "put_f64 == put_u64 of the pattern");
+            CHECK(nbq_get_f64(buf, cap, pos, &e) == NBQ_OK, "get_f64");
+            CHECK(nbq_f64_bits(e) == f64[i], "get_f64 round trip %016llX at %llu", (unsigned long long)f64[i], (unsigned long long)pos);
+        }
+    }
+
+    /* Aligned, the bytes are big-endian IEEE-754, as a network peer expects. */
+    memset(buf, 0, sizeof(buf));
+    CHECK(nbq_put_f32(buf, cap, 0, 3.14159f) == NBQ_OK, "put pi");
+    CHECK(buf[0] == 0x40 && buf[1] == 0x49 && buf[2] == 0x0F && buf[3] == 0xD0, "3.14159f is 40 49 0F D0");
+    CHECK(nbq_put_f64(buf, cap, 32, -2.5) == NBQ_OK, "put -2.5");
+    CHECK(buf[4] == 0xC0 && buf[5] == 0x04 && buf[6] == 0 && buf[11] == 0, "-2.5 is C0 04 00 00 00 00 00 00");
+
+    /* Cursor forms: advance by 32/64, and a failed read or write moves nothing. */
+    {
+        nbq_writer w;
+        nbq_reader r;
+        float g = 0.0f;
+        double e = 0.0;
+        memset(buf, 0, sizeof(buf));
+        CHECK(nbq_writer_init(&w, buf, 100) == NBQ_OK, "writer 100 bits");
+        CHECK(nbq_write_f32(&w, 1.0f) == NBQ_OK && w.pos == 32, "write_f32 advances 32");
+        CHECK(nbq_write_f64(&w, -2.5) == NBQ_OK && w.pos == 96, "write_f64 advances 64");
+        CHECK(nbq_write_f32(&w, 1.0f) == NBQ_ERR_RANGE && w.pos == 96, "write_f32 past cap refused, pos kept");
+        CHECK(nbq_reader_init(&r, buf, 100) == NBQ_OK, "reader");
+        CHECK(nbq_read_f32(&r, &g) == NBQ_OK && nbq_f32_bits(g) == 0x3F800000u && r.pos == 32, "read_f32");
+        CHECK(nbq_read_f64(&r, &e) == NBQ_OK && nbq_f64_bits(e) == 0xC004000000000000ull && r.pos == 96, "read_f64");
+        CHECK(nbq_read_f32(&r, &g) == NBQ_ERR_RANGE && r.pos == 96, "read_f32 past end refused, pos kept");
+        CHECK(nbq_get_f32(NULL, cap, 0, &g) == NBQ_ERR_PARAM, "null buf");
+        CHECK(nbq_get_f32(buf, 31, 0, &g) == NBQ_ERR_RANGE, "31 bits is not enough");
+    }
+}
+
 int main(void)
 {
     test_u64_every_width_and_offset();
@@ -519,6 +598,7 @@ int main(void)
     test_alignment();
     test_strerror_covers_every_code();
     test_version_is_self_reported();
+    test_float_is_a_bit_copy();
 
     printf("nbitq: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

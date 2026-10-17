@@ -8,6 +8,8 @@
   <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
   <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
   <script src="site.js"></script>
+  <script data-goatcounter="https://deftio.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -15,8 +17,8 @@
     var S = nbitqSite;
 
     S.page('index.html', {
-      title: 'Read and write integers of any bit width, at any bit position, in C.',
-      subtitle: 'Two files, C99, no dependencies, about 4.7 KB compiled. Bounds-checked, all-or-nothing, and the bytes are the same on every machine.',
+      title: 'Arbitrary-width bit fields in C',
+      subtitle: 'A C99 library for reading and writing integers of any bit width at any bit position. Two files, no dependencies, about 4.7 KB compiled. Every call is bounds-checked and all-or-nothing.',
       actions: [
         S.linkButton('Getting started', 'getting-started.html', 'light'),
         S.linkButton('How it works', 'how-it-works.html', 'outline-light'),
@@ -39,8 +41,8 @@
           ])
         ]),
 
-        S.section('The problem it solves', [
-          S.p(['Bytes are the smallest thing C can address, but a great deal of data is not organised in bytes. A compressed file, a wire protocol, a register map or a succinct data structure will say something like:']),
+        S.section('What it does', [
+          S.p('Bytes are the smallest unit C can address, but a lot of data is not organised in bytes. A compressed file, a wire protocol, a register map or a succinct data structure is specified like this:'),
           { t: 'blockquote', a: { class: 'bw_blockquote bw_mb_3' }, c: 'bits 0–4: symbol index · bits 5–16: jump offset · bits 17–23: flags' },
           S.bits({
             alt: 'three fields packed into three bytes',
@@ -51,8 +53,8 @@
               { name: 'flags = 0x55 (7 bits)', from: 17, len: 7 }
             ]
           }),
-          S.p(['In C you now write shift-and-mask code by hand. It is tedious, it is easy to get wrong, and it is wrong in a new way wherever a field straddles a byte boundary, which at arbitrary widths is most of them. The standard library offers nothing: ', S.c('memcpy'), ' moves bytes, struct bit-fields have implementation-defined layout, and C++ ', S.c('std::bitset'), ' cannot hand you back an integer from an offset.']),
-          S.p('nbitq is the missing primitive:'),
+          S.p(['In C this is normally shift-and-mask code written by hand, and it goes wrong most often where a field straddles a byte boundary, which at arbitrary widths is most of them. The standard library does not cover it: ', S.c('memcpy'), ' moves bytes, struct bit-fields have implementation-defined layout, and C++ ', S.c('std::bitset'), ' cannot return an integer from an offset.']),
+          S.p('nbitq is that primitive:'),
           S.code([
             'nbq_reader r;',
             'nbq_reader_init(&r, buf, bit_len);',
@@ -62,56 +64,57 @@
             'nbq_read_u32(&r, 12, &offset);',
             'nbq_read_u32(&r, 7,  &flags);'
           ]),
-          S.p('No alignment requirements, no padding, no hand-rolled masks.')
+          S.p('There is no alignment requirement and no padding.')
         ]),
 
-        S.section('Who it is for', [
+        S.section('Where it fits', [
           bw.makeFeatureGrid({
             columns: 2, centered: false,
             features: [
-              { title: 'Format and codec authors', description: 'Compressed containers, packed tries, bit vectors, anything where fields are sized to their content. nbitq addresses the bits; your code gives them meaning.' },
-              { title: 'Protocol and hardware work', description: 'Register dumps, CAN frames, radio packets, telemetry. The spec gives you bit offsets and widths; nbitq takes bit offsets and widths.' },
-              { title: 'Firmware', description: 'Nothing in the core allocates. The reader can point at ROM. One define removes every hosted header and it builds freestanding, under 5 KB on a Cortex-M, with a path that never touches 64-bit arithmetic.' },
-              { title: 'Anyone who needs identical bytes everywhere', description: 'The bit order is fixed and documented. Varints are canonical. Two programs on two machines produce the same output for the same input.' }
+              { title: 'Formats and codecs', description: 'Compressed containers, packed tries, bit vectors: anything where fields are sized to their content. nbitq addresses the bits; the calling code gives them meaning.' },
+              { title: 'Protocols and hardware', description: 'Register dumps, CAN frames, radio packets, telemetry. A spec gives bit offsets and widths; nbitq takes bit offsets and widths.' },
+              { title: 'Firmware', description: 'Nothing in the core allocates. The reader accepts a const buffer in ROM. One define removes every hosted header and the core builds freestanding, under 5 KB on a Cortex-M3, with a path that uses no 64-bit arithmetic.' },
+              { title: 'Portable output', description: 'The bit order is fixed and documented, and varints are canonical. Two programs on two machines produce the same bytes for the same input.' }
             ]
           })
         ]),
 
-        S.section('When not to use it', [
+        S.section('Where it does not fit', [
           S.ul([
-            ['Your fields are whole bytes. Use ', S.c('memcpy'), ' and be happy.'],
-            ['You want a schema compiler that generates a parser from a format description. ', { t: 'a', a: { href: 'https://kaitai.io/' }, c: 'Kaitai Struct' }, ' does that.'],
-            ['You want maximum throughput on bulk integer arrays. SIMD bit-packing libraries such as ', { t: 'a', a: { href: 'https://github.com/lemire/simdcomp' }, c: 'simdcomp' }, ' are far faster at that job; nbitq is deliberately not optimised.'],
-            ['You are in Python. ', { t: 'a', a: { href: 'https://bitstring.readthedocs.io/' }, c: 'bitstring' }, ' is more capable and more ergonomic there.']
+            ['Fields that are whole bytes: ', S.c('memcpy'), ' is enough.'],
+            ['A parser generated from a format description: ', { t: 'a', a: { href: 'https://kaitai.io/' }, c: 'Kaitai Struct' }, ' does that.'],
+            ['Bulk integer arrays at high throughput: SIMD bit-packing libraries such as ', { t: 'a', a: { href: 'https://github.com/lemire/simdcomp' }, c: 'simdcomp' }, ' are much faster. nbitq is bit-at-a-time by design.'],
+            ['Python: ', { t: 'a', a: { href: 'https://bitstring.readthedocs.io/' }, c: 'bitstring' }, ' is more capable there.']
           ])
         ]),
 
-        S.section('What you get', [
-          S.table(['Need', 'nbitq'], [
-            { Need: 'A field at a known position', nbitq: 'nbq_get_u32 / nbq_put_u32, with 64-bit and signed variants' },
-            { Need: 'A sequence of fields', nbitq: 'nbq_reader / nbq_writer cursors, with seek and align' },
-            { Need: 'A small number in few bits', nbitq: 'varints at any group width from 2 to 64 bits; base 8 is LEB128 exactly' },
-            { Need: 'A span of bits moved somewhere else', nbitq: 'nbq_copy_bits from any offset to any offset, overlap-safe' },
-            { Need: 'Compare, fill, count', nbitq: 'nbq_compare_bits, nbq_fill_bits, nbq_popcount_bits' },
-            { Need: '64-bit values on a 32-bit CPU', nbitq: 'nbq_get_parts / nbq_put_parts, 32-bit arithmetic only' },
-            { Need: 'Hand a bit run to another program', nbitq: 'the optional .nbq container: length, type string, CRC-64' }
+        S.section('Functions', [
+          S.table(['Operation', 'nbitq'], [
+            { Operation: 'A field at a known position', nbitq: 'nbq_get_u32 / nbq_put_u32, with 64-bit and signed variants' },
+            { Operation: 'A sequence of fields', nbitq: 'nbq_reader / nbq_writer cursors, with seek and align' },
+            { Operation: 'A small number in few bits', nbitq: 'varints at any group width from 2 to 64 bits; base 8 is LEB128 exactly' },
+            { Operation: 'A span of bits moved elsewhere', nbitq: 'nbq_copy_bits from any offset to any offset, overlap-safe' },
+            { Operation: 'Compare, fill, count', nbitq: 'nbq_compare_bits, nbq_fill_bits, nbq_popcount_bits' },
+            { Operation: 'A float or double', nbitq: 'nbq_get_f32 / nbq_put_f32, nbq_get_f64 / nbq_put_f64: IEEE-754 bit patterns, header-only' },
+            { Operation: '64-bit values on a 32-bit CPU', nbitq: 'nbq_get_parts / nbq_put_parts, 32-bit arithmetic only' },
+            { Operation: 'A bit run stored in a file', nbitq: 'the optional .nbq container: length, type string, CRC-64' }
           ])
         ]),
 
-        S.section('What you can rely on', [
+        S.section('Fixed conventions', [
           bw.makeFeatureGrid({
             columns: 2, centered: false,
             features: [
-              { title: 'Bit 0 is the MSB of byte 0', description: 'Fields are written most-significant bit first. This never changes.' },
-              { title: 'Every operation is all-or-nothing', description: 'On failure nothing is written and no cursor moves, so you can try a read, have it fail, and carry on.' },
-              { title: 'Bad input is refused, not approximated', description: 'An out-of-range width or position, a varint too wide for 64 bits, or an overlong encoding all return errors.' },
-              { title: 'Varints are canonical', description: 'One value encodes exactly one way, so two programs writing the same data produce the same bytes.' }
+              { title: 'Bit 0 is the MSB of byte 0', description: 'Fields are written most-significant bit first. This does not change.' },
+              { title: 'Every operation is all-or-nothing', description: 'On failure nothing is written and no cursor moves, so a failed read can be retried.' },
+              { title: 'Bad input is refused, not approximated', description: 'An out-of-range width or position, a varint too wide for 64 bits, or an overlong encoding is an error.' },
+              { title: 'Varints are canonical', description: 'One value has exactly one encoding.' }
             ]
           })
         ]),
 
-        S.section('Small enough to measure', [
-          S.p(['Freestanding, with ', S.c('NBQ_NO_MALLOC'), ', no libc. Reproduce with ', S.c('make targets'), '.']),
+        S.section('Code size', [
+          S.p(['Freestanding, with ', S.c('NBQ_NO_MALLOC'), ', no libc, ', S.c('-Oz'), '. Reproduce with ', S.c('make targets'), '.']),
           S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
             { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,843' },
             { target: 'Cortex-M0 (Thumb-1)', text: '5,085' },
@@ -119,17 +122,10 @@
             { target: 'AArch64', text: '4,401' },
             { target: 'x86-64', text: '4,559' }
           ]),
-          S.p('Tested exhaustively rather than representatively: every width from 1 to 64, every varint base from 2 to 64, every start offset within a byte, truncation at every bit position, under AddressSanitizer and UndefinedBehaviorSanitizer, plus a property-checking fuzz harness.')
+          S.p('The tests cover every width from 1 to 64, every varint base from 2 to 64, every start offset within a byte and truncation at every bit position, under AddressSanitizer and UndefinedBehaviorSanitizer, plus a property-checking fuzz harness.')
         ]),
 
-        bw.makeCTA({
-          title: 'Copy two files and start',
-          description: 'nbitq.h and nbitq.c. No configuration, nothing to generate.',
-          actions: [
-            S.linkButton('Getting started', 'getting-started.html'),
-            S.linkButton('API reference', 'api.html', 'outline-primary')
-          ]
-        })
+        S.next([['Getting started', 'getting-started.html'], ['How it works', 'how-it-works.html'], ['API reference', 'api.html']])
       ]
     });
   </script>

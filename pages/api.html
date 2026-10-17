@@ -8,6 +8,8 @@
   <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
   <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
   <script src="site.js"></script>
+  <script data-goatcounter="https://deftio.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -16,11 +18,65 @@
 
     function fn(sig, note) { return { sig: S.c(sig), note: note }; }
     var FN = [{ key: 'sig', label: 'Function' }, { key: 'note', label: 'Notes' }];
+    function row(name, does) { return { fn: S.c(name), does: does }; }
+    var DOES = [{ key: 'fn', label: 'Function' }, { key: 'does', label: 'Does' }];
 
     S.page('api.html', {
       title: 'API reference',
       subtitle: 'Everything is in nbitq.h unless marked container, which is nbitq_container.h. All functions are extern "C".',
       content: [
+
+        S.section('Overview', [
+          S.p('Every function, by group. The sections below give signatures and the details.'),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Version and errors' },
+          S.table(DOES, [
+            row('nbq_version_string() / nbq_version()', 'Version of the library that was linked, as a string and as (major << 16) | (minor << 8) | patch'),
+            row('nbq_strerror(rc)', 'Text for a result code')
+          ]),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Indexed fixed-width integers (buffer, length, position; no state)' },
+          S.table(DOES, [
+            row('nbq_get_u64 / nbq_get_u32', 'Read n bits at bit_pos as an unsigned integer, MSB first'),
+            row('nbq_get_s64 / nbq_get_s32', 'The same, sign-extended from bit n−1'),
+            row('nbq_put_u64 / nbq_put_u32', 'Write the low n bits of a value at bit_pos; bits outside the field are untouched'),
+            row('nbq_put_s64 / nbq_put_s32', 'The same for a signed value (two’s complement in n bits)'),
+            row('nbq_get_parts / nbq_put_parts', 'Up to 64 bits as a {hi, lo} pair of 32-bit halves, using no 64-bit arithmetic'),
+            row('nbq_get_f32 / nbq_put_f32 / nbq_get_f64 / nbq_put_f64', 'A float or double as its IEEE-754 bit pattern in a 32- or 64-bit field; header-only, no floating-point arithmetic')
+          ]),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Indexed varints' },
+          S.table(DOES, [
+            row('nbq_get_varint / nbq_put_varint', 'Decode or encode an unsigned varint with base-bit groups; next_pos receives the end'),
+            row('nbq_get_varint_s / nbq_put_varint_s', 'The same with zigzag for signed values'),
+            row('nbq_varint_bits / nbq_varint_bits_s', 'Encoded width of a value at a base, without writing')
+          ]),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Bit runs (any length)' },
+          S.table(DOES, [
+            row('nbq_copy_bits', 'Move n bits from one offset to another, in the same or another buffer; overlap-safe'),
+            row('nbq_fill_bits', 'Set n bits to 0 or 1'),
+            row('nbq_compare_bits', 'Compare two runs, MSB first, like memcmp'),
+            row('nbq_popcount_bits', 'Count the 1 bits in a run')
+          ]),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Cursor (a reader or writer struct holding a position)' },
+          S.table(DOES, [
+            row('nbq_reader_init / nbq_writer_init', 'Point a cursor at caller-owned storage; allocates nothing'),
+            row('nbq_writer_init_alloc / nbq_writer_free', 'A writer over a heap buffer that doubles as needed; the only allocation in the library'),
+            row('nbq_reader_remaining', 'Bits not yet read'),
+            row('nbq_reader_seek / nbq_writer_seek', 'Move the position; a fixed writer refuses a position past its capacity'),
+            row('nbq_reader_align / nbq_writer_align', 'Advance to the next multiple of n bits; the writer writes zeros, the reader requires zeros'),
+            row('nbq_read_u64 _s64 _u32 _s32 _parts _varint _varint_s', 'The indexed get at the cursor position, then advance'),
+            row('nbq_write_u64 _s64 _u32 _s32 _parts _varint _varint_s', 'The indexed put at the cursor position, then advance'),
+            row('nbq_read_bits / nbq_write_bits', 'nbq_copy_bits to or from the cursor position, then advance'),
+            row('nbq_read_f32 _f64 / nbq_write_f32 _f64', 'The float forms at the cursor position, then advance')
+          ]),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Container (nbitq_container.h, optional)' },
+          S.table(DOES, [
+            row('nbq_container_size', 'Bytes a container of a given type length and payload length occupies'),
+            row('nbq_container_write', 'Write magic, type, length, payload and CRC-64 into a buffer'),
+            row('nbq_container_read', 'Parse and verify a container; the result aliases the input'),
+            row('nbq_container_read_unchecked', 'The same without the CRC check'),
+            row('nbq_crc64 / nbq_crc64_update / nbq_crc64_final', 'CRC-64/XZ, one-shot or incremental')
+          ]),
+          S.p(['Get and put exist in both the indexed and the cursor form. There is no insert; see ', { t: 'a', a: { href: '#not-provided' }, c: 'Not provided' }, ' for the way to do it with what is here.'])
+        ], 'overview'),
 
         S.section('Conventions', [
           S.table([{ key: 'name', label: 'Parameter' }, { key: 'meaning', label: 'Meaning' }], [
@@ -51,7 +107,7 @@
 
         S.section('Constants and macros', [
           S.code([
-            '#define NBQ_VERSION_STRING   "0.1.0"   /* and NBQ_VERSION_MAJOR / MINOR / PATCH */',
+            '#define NBQ_VERSION_STRING   "0.1.1"   /* and NBQ_VERSION_MAJOR / MINOR / PATCH */',
             '#define NBQ_VERSION          /* (MAJOR << 16) | (MINOR << 8) | PATCH */',
             '',
             'const char *nbq_version_string(void);  /* the linked library\'s NBQ_VERSION_STRING */',
@@ -92,6 +148,24 @@
             'nbq_result nbq_put_parts(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned n, nbq_u64_parts value);'
           ]),
           S.p([S.c('n'), ' is 1..64. Same bits as ', S.c('nbq_get_u64'), ' / ', S.c('nbq_put_u64'), ', using only 32-bit arithmetic.']),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Floating point' },
+          S.code([
+            'static inline nbq_result nbq_get_f32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, float  *out);',
+            'static inline nbq_result nbq_put_f32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, float  value);',
+            'static inline nbq_result nbq_get_f64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, double *out);',
+            'static inline nbq_result nbq_put_f64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, double value);',
+            '',
+            'static inline uint32_t nbq_f32_bits(float f);          /* the reinterpretation, both ways */',
+            'static inline float    nbq_f32_from_bits(uint32_t u);',
+            'static inline uint64_t nbq_f64_bits(double d);',
+            'static inline double   nbq_f64_from_bits(uint64_t u);'
+          ]),
+          S.ul([
+            ['A ', S.c('float'), ' or ', S.c('double'), ' is stored as its IEEE-754 bit pattern in a 32- or 64-bit field, MSB first. At a byte-aligned position the bytes are big-endian: ', S.c('3.14159f'), ' is ', S.c('40 49 0F D0'), '.'],
+            ['A copy, not a conversion. NaN payloads, signalling NaNs, signed zeros and denormals round-trip bit for bit. ', S.c('nbq_put_f32(.., f)'), ' writes exactly what ', S.c('nbq_put_u32(.., 32, nbq_f32_bits(f))'), ' writes.'],
+            ['No floating-point arithmetic or runtime is involved, so a core without an FPU pays for a register move. The functions are ', S.c('static inline'), ' in the header; ', S.c('nbitq.c'), ' contains no floating-point code and a program that never calls them links nothing for them.'],
+            ['The position need not be byte-aligned. On a 32-bit target, ', S.c('nbq_put_parts'), ' with ', S.c('nbq_f64_bits'), ' split into halves avoids 64-bit arithmetic.']
+          ]),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Varints' },
           S.code([
             'nbq_result nbq_get_varint  (const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned base, uint64_t *out, uint64_t *next_pos);',
@@ -127,7 +201,7 @@
         ], 'indexed'),
 
         S.section('Cursor API', [
-          S.p('Thin wrappers over the indexed API. The structs are public; place them wherever you like.'),
+          S.p('Thin wrappers over the indexed API. The structs are public and can live anywhere.'),
           S.code([
             'typedef struct {',
             '    const uint8_t *buf;',
@@ -169,6 +243,9 @@
             'nbq_result nbq_read_varint_s(nbq_reader *r, unsigned base, int64_t *out);',
             'nbq_result nbq_read_bits    (nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);',
             '',
+            'static inline nbq_result nbq_read_f32(nbq_reader *r, float  *out);   /* advance 32 */',
+            'static inline nbq_result nbq_read_f64(nbq_reader *r, double *out);   /* advance 64 */',
+            '',
             'nbq_result nbq_write_u64     (nbq_writer *w, unsigned n, uint64_t value);',
             'nbq_result nbq_write_s64     (nbq_writer *w, unsigned n, int64_t value);',
             'nbq_result nbq_write_u32     (nbq_writer *w, unsigned n, uint32_t value);',
@@ -176,9 +253,41 @@
             'nbq_result nbq_write_parts   (nbq_writer *w, unsigned n, nbq_u64_parts value);',
             'nbq_result nbq_write_varint  (nbq_writer *w, unsigned base, uint64_t value);',
             'nbq_result nbq_write_varint_s(nbq_writer *w, unsigned base, int64_t value);',
-            'nbq_result nbq_write_bits    (nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);'
+            'nbq_result nbq_write_bits    (nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);',
+            '',
+            'static inline nbq_result nbq_write_f32(nbq_writer *w, float  value);',
+            'static inline nbq_result nbq_write_f64(nbq_writer *w, double value);'
           ])
         ], 'cursor'),
+
+        S.section('Not provided', [
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Insert and delete' },
+          S.p('Insert is not in the API because it is a short composition of what is. The example was run against the library.'),
+          S.p(['put overwrites in place. To insert a field, open a gap with ', S.c('nbq_copy_bits'), ', which handles the overlap, then put into it. ', S.c('len'), ' is the number of bits in use; ', S.c('cap'), ' is the buffer’s capacity.']),
+          S.code([
+            'static nbq_result insert_u32(uint8_t *buf, uint64_t cap, uint64_t *len,',
+            '                             uint64_t pos, unsigned n, uint32_t value)',
+            '{',
+            '    nbq_result rc = nbq_copy_bits(buf, cap, pos, buf, cap, pos + n, *len - pos);',
+            '    if (rc != NBQ_OK) return rc;              /* no room: nothing moved */',
+            '    rc = nbq_put_u32(buf, cap, pos, n, value);',
+            '    if (rc != NBQ_OK) return rc;',
+            '    *len += n;',
+            '    return NBQ_OK;',
+            '}',
+            '',
+            'static nbq_result delete_bits(uint8_t *buf, uint64_t cap, uint64_t *len,',
+            '                              uint64_t pos, unsigned n)',
+            '{',
+            '    nbq_result rc = nbq_copy_bits(buf, cap, pos + n, buf, cap, pos, *len - pos - n);',
+            '    if (rc != NBQ_OK) return rc;',
+            '    *len -= n;',
+            '    return NBQ_OK;',
+            '}'
+          ]),
+          S.p(['Starting from the 24-bit example ', S.c('9D DC 55'), ' (fields 19, 3000, 0x55), inserting the 3-bit value 6 at bit 5 gives ', S.c('9E BB 8A A0'), ', 27 bits, and the fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores ', S.c('9D DC 55'), '. An insert that would pass ', S.c('cap'), ' fails with ', S.c('NBQ_ERR_RANGE'), ' and moves nothing. Insertion is linear in the number of bits after ', S.c('pos'), '.']),
+          S.bits({ alt: 'the example after inserting 3 bits at bit 5', bytes: [0x9E, 0xBB, 0x8A, 0xA0], fields: [ { name: '19', from: 0, len: 5 }, { name: '6', from: 5, len: 3 }, { name: '3000', from: 8, len: 12 }, { name: '0x55', from: 20, len: 7 } ] }),
+        ], 'not-provided'),
 
         S.section('Container', [
           S.p([S.c('#include "nbitq_container.h"'), ', compile ', S.c('nbitq_container.c'), '. Optional and separate on purpose.']),
@@ -217,14 +326,9 @@
           S.p(['ECMA-182 polynomial, reflected, init and final XOR all ones. Verified against ', S.c('CRC-64/XZ("123456789") == 0x995DC9BBDF1939FA'), '. Bitwise, no table.'])
         ], 'container'),
 
-        bw.makeCTA({
-          title: 'The headers are the reference of record',
-          description: 'nbitq.h and nbitq_container.h carry the same documentation as comments, next to the declarations.',
-          actions: [
-            S.linkButton('nbitq.h on GitHub', S.REPO + '/blob/main/nbitq.h'),
-            S.linkButton('nbitq_container.h', S.REPO + '/blob/main/nbitq_container.h', 'outline-primary')
-          ]
-        })
+        S.section(null, [
+          S.p(['The headers are the reference of record: ', { t: 'a', a: { href: S.REPO + '/blob/main/nbitq.h' }, c: 'nbitq.h' }, ' and ', { t: 'a', a: { href: S.REPO + '/blob/main/nbitq_container.h' }, c: 'nbitq_container.h' }, ' carry the same documentation as comments, next to the declarations.'])
+        ])
       ]
     });
   </script>
