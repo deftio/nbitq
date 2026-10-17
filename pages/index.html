@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>nbitq - arbitrary-width bit fields in C</title>
-  <meta name="description" content="nbitq reads and writes integers of any bit width at any bit position in C. Two files, C99, no dependencies, about 4.7 KB compiled.">
+  <title>nbitq - pack and unpack n-bit integers in C</title>
+  <meta name="description" content="nbitq packs and unpacks n-bit integers in a bit stream, back to back or at any bit position, and reads them back as native integers. C99, two files, no dependencies.">
   <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
   <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
   <script src="site.js"></script>
@@ -17,8 +17,8 @@
     var S = nbitqSite;
 
     S.page('index.html', {
-      title: 'Arbitrary-width bit fields in C',
-      subtitle: 'A C99 library for reading and writing integers of any bit width at any bit position. Two files, no dependencies, about 4.7 KB compiled. Every call is bounds-checked and all-or-nothing.',
+      title: 'Pack and unpack n-bit integers in a bit stream',
+      subtitle: 'Put a 5-bit, a 12-bit and a 7-bit value back to back, or at any bit position, and read them back as native integers. For compressed formats, wire protocols, register maps and succinct data structures, where data is laid out in bits rather than bytes.',
       actions: [
         S.linkButton('Getting started', 'getting-started.html', 'light'),
         S.linkButton('How it works', 'how-it-works.html', 'outline-light'),
@@ -66,6 +66,16 @@
           ]),
           S.p('There is no alignment requirement and no padding.')
         ]),
+
+        S.section('The library', [
+          S.ul([
+            ['C99, two files: ', S.c('nbitq.h'), ' and ', S.c('nbitq.c'), '. No dependencies, not even libc for the core; it builds with ', S.c('-ffreestanding'), ' under ', S.c('NBQ_NO_MALLOC'), '.'],
+            ['About 4.7 KB of code at ', S.c('-Oz'), ' on Cortex-M; see the table below.'],
+            ['Every call is bounds-checked against the length it is given and is all-or-nothing: a call that fails writes nothing and moves no cursor.'],
+            ['Optional, in separate files: a ', S.c('.nbq'), ' container with a type string and CRC-64, and ', S.c('nbitq.hpp'), ', a header-only C++ wrapper.'],
+            ['BSD-2-Clause.']
+          ])
+        ], 'library'),
 
         S.section('Where it fits', [
           bw.makeFeatureGrid({
@@ -117,11 +127,11 @@
         S.section('Code size', [
           S.p(['Freestanding, with ', S.c('NBQ_NO_MALLOC'), ', no libc, ', S.c('-Oz'), '. Reproduce with ', S.c('make targets'), '.']),
           S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
-            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,843' },
-            { target: 'Cortex-M0 (Thumb-1)', text: '5,085' },
-            { target: 'ARM v7-A', text: '7,317' },
-            { target: 'AArch64', text: '4,401' },
-            { target: 'x86-64', text: '4,559' }
+            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,793' },
+            { target: 'Cortex-M0 (Thumb-1)', text: '5,025' },
+            { target: 'ARM v7-A', text: '7,249' },
+            { target: 'AArch64', text: '4,389' },
+            { target: 'x86-64', text: '4,545' }
           ]),
           S.p('The tests cover every width from 1 to 64, every varint base from 2 to 64, every start offset within a byte and truncation at every bit position, under AddressSanitizer and UndefinedBehaviorSanitizer, plus a property-checking fuzz harness.')
         ]),

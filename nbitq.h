@@ -1,6 +1,6 @@
 /**
  * @file nbitq.h
- * @brief nbitq -- arbitrary-width bit field read/write. C99, no dependencies.
+ * @brief nbitq -- pack and unpack n-bit integers in a bit stream. C99, no dependencies.
  *
  * Put an n-bit quantity into a buffer at a bit position; get it back out.
  * That is the whole library. It has no format, no header, no magic bytes and

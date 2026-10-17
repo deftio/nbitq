@@ -6,9 +6,13 @@ change it without breaking the promises it makes.
 
 ## Why this repo exists
 
-nbitq reads and writes integers of any width (1 to 64 bits) at any bit
-position in a byte buffer, in C99, with no dependencies. The same
-operations exist in two forms:
+nbitq packs and unpacks n-bit integers in a bit stream. A value of any
+width from 1 to 64 bits goes into a byte buffer back to back with the
+previous one or at an explicit bit position, and comes back out as a native
+integer. That is what a compressed format, a wire protocol or a succinct
+data structure needs and what C does not provide: struct bit-fields have
+implementation-defined layout and `memcpy` moves bytes. C99, two files, no
+dependencies. The same operations exist in two forms:
 
 - **Indexed**: `nbq_get_u32(buf, bit_len, bit_pos, n, &out)` and
   `nbq_put_u32(buf, bit_cap, bit_pos, n, value)`. Explicit position, no

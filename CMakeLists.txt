@@ -1,4 +1,4 @@
-# nbitq -- arbitrary-width bit field read/write.
+# nbitq -- pack and unpack n-bit integers in a bit stream.
 #
 # This file works two ways:
 #

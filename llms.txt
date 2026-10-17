@@ -1,6 +1,6 @@
 # nbitq
 
-> C99 library for reading and writing integers of any bit width (1 to 64) at any bit position in a byte buffer. Two source files, no dependencies, about 4.8 KB compiled. Offers both indexed (`nbq_get_u32` / `nbq_put_u32` at an explicit bit position) and cursor (`nbq_read_u32` / `nbq_write_u32` through a `nbq_reader` / `nbq_writer`) forms over the same buffer, sharing one implementation. Also variable-width varints (base 2 to 64; base 8 is LEB128), signed fields, f32/f64 as bit patterns, and bit-run copy/fill/compare/popcount. Bit 0 is the MSB of byte 0. BSD-2-Clause.
+> C99 library that packs and unpacks n-bit integers in a bit stream: values of any width from 1 to 64 bits, written back to back or at any bit position in a byte buffer, and read back as native integers. For compressed formats, wire protocols, register maps and succinct data structures, where data is laid out in bits rather than bytes. Two source files, no dependencies, about 4.8 KB compiled. Offers both indexed (`nbq_get_u32` / `nbq_put_u32` at an explicit bit position) and cursor (`nbq_read_u32` / `nbq_write_u32` through a `nbq_reader` / `nbq_writer`) forms over the same buffer, sharing one implementation. Also variable-width varints (base 2 to 64; base 8 is LEB128), signed fields, f32/f64 as bit patterns, and bit-run copy/fill/compare/popcount. Bit 0 is the MSB of byte 0. BSD-2-Clause.
 
 Vendored by the triepack and hutter projects, which need the paired indexed and cursor primitives. The bit numbering, varint format and result codes are fixed and will not change.
 

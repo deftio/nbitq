@@ -1,8 +1,9 @@
 # What nbitq is
 
-nbitq reads and writes integers of any width, from 1 to 64 bits, at any bit
-position in a byte buffer. Two C99 files, no dependencies, about 4.7 KB
-compiled.
+nbitq packs and unpacks n-bit integers in a bit stream: values of any width
+from 1 to 64 bits, written back to back or at any bit position in a byte
+buffer, and read back as native integers. Two C99 files, no dependencies,
+about 4.7 KB compiled.
 
 ```c
 uint8_t buf[64] = {0};

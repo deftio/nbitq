@@ -5,7 +5,9 @@
 [![GitHub release](https://img.shields.io/github/v/release/deftio/nbitq?sort=semver&logo=github&logoColor=white&label=GitHub&color=24292F)](https://github.com/deftio/nbitq/releases)
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-0A5C9E)](LICENSE.txt)
 
-**Read and write integers of any bit width, at any bit position, in C.**
+**Pack and unpack n-bit integers in a bit stream, in C.** Put a 5-bit, a
+12-bit and a 7-bit value back to back, or at any bit position, and read them
+back as native integers.
 
 ```c
 #include "nbitq.h"
