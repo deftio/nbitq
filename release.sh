@@ -126,7 +126,7 @@ stage_version() {
 # FetchContent tag and quote NBQ_VERSION_STRING, and they must not go stale.
 VERSION_FILES=(nbitq.h CMakeLists.txt CHANGELOG.md
                README.md docs/getting-started.md pages/getting-started.html
-               docs/api-reference.md pages/api.html)
+               docs/api-reference.md pages/api.html pages/site.js)
 
 # Everything that can refuse a bump is checked before the suite runs, so a
 # missing changelog entry is reported in a second rather than after it.
@@ -167,6 +167,7 @@ bump() {
         README.md docs/getting-started.md pages/getting-started.html
     perl -pi -e "s/(NBQ_VERSION_STRING\s+)\"\Q$old\E\"/\${1}\"$new\"/" \
         docs/api-reference.md pages/api.html
+    perl -pi -e "s/^(\s*var VERSION = \x27)\Q$old\E\x27/\${1}$new\x27/" pages/site.js
 
     # A stale spelling in any tracked file is a bug in VERSION_FILES, so look.
     # CHANGELOG.md keeps every old version on purpose.

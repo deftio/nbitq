@@ -15,6 +15,7 @@
   'use strict';
 
   var REPO = 'https://github.com/deftio/nbitq';
+  var VERSION = '0.1.2';   // kept in step by release.sh; shown beside the name
 
   var NAV = [
     { text: 'Home',            href: 'index.html' },
@@ -57,6 +58,8 @@
     // headers (BCCL centres both), and the bit diagram.
     bw.injectCSS(bw.css({
       '.bw_bccl_hero_actions': { 'justify-content': 'flex-start' },
+      // the version beside the name in the navbar: small, plain, legible
+      '.nq_version': { 'font-size': '0.7em', 'font-weight': 'normal', 'opacity': '0.8', 'margin-left': '0.5em', 'letter-spacing': '0.02em' },
       '.bw_bccl_table > thead > tr > *': { 'text-align': 'left' },
       '.nq_bits': { 'max-width': '100%', height: 'auto', display: 'block', margin: '0.75rem 0' },
       '.nq_bits text': { 'font-family': '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace' },
@@ -83,7 +86,7 @@
   // ---- Chrome --------------------------------------------------------------
   function nav(current) {
     return bw.makeNavbar({
-      brand: 'nbitq',
+      brand: ['nbitq', { t: 'span', a: { class: 'nq_version' }, c: 'v' + VERSION }],
       brandHref: 'index.html',
       dark: true,
       items: NAV.map(function (i) {
@@ -115,7 +118,7 @@
       t: 'footer', a: { class: 'bw_container bw_py_5 bw_text_muted' },
       c: [
         { t: 'p', a: { class: 'bw_mb_2' }, c: [
-          'nbitq is BSD-2-Clause. © 2026 deftio / M. A. Chatterjee. ',
+          'nbitq v' + VERSION + ' is BSD-2-Clause. © 2026 deftio / M. A. Chatterjee. ',
           { t: 'a', a: { href: REPO }, c: 'Source on GitHub' }, ' · ',
           { t: 'a', a: { href: REPO + '/issues' }, c: 'Issues' }, ' · ',
           { t: 'a', a: { href: REPO + '/blob/main/SECURITY.md' }, c: 'Security' }
