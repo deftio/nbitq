@@ -9,6 +9,8 @@ repository root is the short version.
 | [Getting started](getting-started.md) | Quickstart, install, result codes, varints, embedded builds |
 | [How it works](how-it-works.md) | Which bit goes where, with worked examples down to the byte |
 | [API reference](api-reference.md) | Overview of every function, signatures, and what is not provided |
+| [AGENTS.md](../AGENTS.md) | For coding agents: why the library exists, fixed conventions, build and release rules |
+| [llms.txt](../llms.txt) | Index of this material in the llms.txt format |
 
 The same material is published as a website at
 <https://deftio.github.io/nbitq/>, built from the static pages in

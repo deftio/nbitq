@@ -402,6 +402,10 @@ The same material is in [`docs/`](docs/) as Markdown:
 [what it is](docs/what-is-nbitq.md), [getting started](docs/getting-started.md),
 [how it works](docs/how-it-works.md) and the [API reference](docs/api-reference.md).
 
+[`AGENTS.md`](AGENTS.md) is the short version for coding agents: why the
+library exists, the fixed conventions, and how to build and test. [`llms.txt`](llms.txt)
+is the same map in the llms.txt format.
+
 ## Contributing
 
 Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
