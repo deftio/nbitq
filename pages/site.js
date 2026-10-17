@@ -59,7 +59,7 @@
     bw.injectCSS(bw.css({
       '.bw_bccl_hero_actions': { 'justify-content': 'flex-start' },
       // the version beside the name in the navbar: small, plain, legible
-      '.nq_version': { 'font-size': '0.7em', 'font-weight': 'normal', 'opacity': '0.8', 'margin-left': '0.5em', 'letter-spacing': '0.02em' },
+      '.nq_version': { 'font-size': '0.85em', 'font-weight': 'normal', 'opacity': '1', 'margin-left': '0.6em', 'letter-spacing': '0.02em' },
       '.bw_bccl_table > thead > tr > *': { 'text-align': 'left' },
       '.nq_bits': { 'max-width': '100%', height: 'auto', display: 'block', margin: '0.75rem 0' },
       '.nq_bits text': { 'font-family': '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace' },
