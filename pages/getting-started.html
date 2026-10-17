@@ -73,7 +73,7 @@
             'include(FetchContent)',
             'FetchContent_Declare(nbitq',
             '    GIT_REPOSITORY https://github.com/deftio/nbitq.git',
-            '    GIT_TAG        v0.1.1)',
+            '    GIT_TAG        v0.1.2)',
             'FetchContent_MakeAvailable(nbitq)',
             'target_link_libraries(your_target PRIVATE nbitq)'
           ]),
@@ -173,29 +173,39 @@
             '      -DNBQ_NO_MALLOC -c nbitq.c'
           ]),
           S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
-            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,843' },
-            { target: 'Cortex-M0 (Thumb-1)', text: '5,085' },
-            { target: 'ARM v7-A', text: '7,317' },
-            { target: 'AArch64', text: '4,401' },
-            { target: 'x86-64', text: '4,559' }
+            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,793' },
+            { target: 'Cortex-M0 (Thumb-1)', text: '5,025' },
+            { target: 'ARM v7-A', text: '7,249' },
+            { target: 'AArch64', text: '4,389' },
+            { target: 'x86-64', text: '4,545' }
           ]),
           S.p(['No stdio, no floating-point arithmetic, no libm, no recursion, no global state; each reader or writer is independent. On a 32-bit CPU without native 64-bit arithmetic, the ', S.c('u32'), ' functions cover fields up to 32 bits and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' cover wider ones. They produce the same bits as the ', S.c('u64'), ' functions; only the arithmetic differs.'])
         ], 'embedded'),
 
         S.section('From C++', [
+          S.p(['The headers are ', S.c('extern "C"'), ', so every function works unchanged from C++. ', S.c('nbitq.hpp'), ' adds the cursor API as classes. Each method is one call into the C library with the ', S.c('nbq_read_'), ' or ', S.c('nbq_write_'), ' prefix dropped, so ', S.c('nbq_read_u32(&r, n, &v)'), ' is ', S.c('r.u32(n, &v)'), ':']),
           S.code([
-            '#include "nbitq.h"       // extern "C" inside',
+            '#include "nbitq.hpp"     // includes nbitq.h; header-only, C++11',
             '',
-            'nbq_writer w;',
-            'nbq_writer_init(&w, buf, sizeof(buf) * 8);',
-            'nbq_write_u32(&w, 12, 3000);'
+            'uint8_t buf[64] = {0};',
+            'nbq::Writer w(buf, sizeof(buf) * 8);',
+            'w.u32(5, 19);',
+            'w.u32(12, 3000);',
+            'w.varint(8, 300);',
+            '',
+            'nbq::Reader r(buf, w.pos());',
+            'uint32_t symbol, offset;',
+            'r.u32(5, &symbol);',
+            'r.u32(12, &offset);'
           ]),
-          S.p([S.c('make cxx'), ' compiles and links both headers from a C++ translation unit.'])
+          S.p([S.c('nbq::OwningWriter'), ' is the growing writer with ', S.c('nbq_writer_free'), ' in its destructor; it moves and does not copy. ', S.c('handle()'), ' on any of the three returns the C struct for code that takes one.']),
+          S.p(['The wrapper returns ', S.c('nbq_result'), ' like the C API and uses nothing from the standard library, so ', S.c('-fno-exceptions'), ' and freestanding C++ builds are unaffected. It does not wrap the indexed functions, which have no state to wrap; call ', S.c('nbq_get_u32'), ' and the rest directly. ', S.c('make cxx'), ' compiles, links and runs the wrapper\'s tests, one per method.'])
         ], 'cxx'),
 
         S.section('Building and testing the library', [
           S.code([
-            'make check      # tests, ASan+UBSan, fuzz, C++ link, NBQ_NO_MALLOC, code size',
+            'make check      # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC, code size',
+            'make coverage   # every line of the library executed by the tests, or fail',
             'make targets    # freestanding cross-compiles (needs clang)',
             './release.sh    # everything CI runs',
             '',

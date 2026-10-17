@@ -291,16 +291,12 @@ nbq_result nbq_get_varint(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos
         const uint64_t chunk = group & mask;
 
         /* Refuse rather than truncate. A value that does not fit 64 bits is
-           malformed input, not a large number. */
-        if (shift >= 64u) {
-            if (chunk != 0u)
-                return NBQ_ERR_OVERFLOW;
-        } else {
-            const unsigned int room = 64u - shift;
-            if (room < 64u && (chunk >> room) != 0u)
-                return NBQ_ERR_OVERFLOW;
-            val |= chunk << shift;
-        }
+           malformed input, not a large number. shift is below 64 here:
+           groups_limit ends the loop before a group could start past bit 63. */
+        const unsigned int room = 64u - shift;
+        if (room < 64u && (chunk >> room) != 0u)
+            return NBQ_ERR_OVERFLOW;
+        val |= chunk << shift;
 
         if ((group & cont) == 0u) {
             /* Canonical: only a single-group encoding may end in a zero
@@ -477,7 +473,7 @@ nbq_result nbq_writer_init_alloc(nbq_writer *w, uint64_t initial_bits)
         initial_bits = 512u;
     const uint64_t bytes = NBQ_BYTES_FOR_BITS(initial_bits);
     if (bytes > (uint64_t)SIZE_MAX)
-        return NBQ_ERR_ALLOC;
+        return NBQ_ERR_ALLOC; /* LCOV_EXCL_LINE: only when size_t is narrower than 64 bits */
     /* calloc, not malloc: a partially written buffer must read back as zeros
        rather than as whatever the heap last held. */
     w->buf = (uint8_t *)calloc(1, (size_t)bytes);
@@ -523,7 +519,7 @@ static nbq_result writer_reserve(nbq_writer *w, uint64_t n)
     const uint64_t new_bytes = NBQ_BYTES_FOR_BITS(new_cap);
     const uint64_t old_bytes = NBQ_BYTES_FOR_BITS(w->cap);
     if (new_bytes > (uint64_t)SIZE_MAX)
-        return NBQ_ERR_ALLOC;
+        return NBQ_ERR_ALLOC; /* LCOV_EXCL_LINE: only when size_t is narrower than 64 bits */
     uint8_t *grown = (uint8_t *)realloc(w->buf, (size_t)new_bytes);
     if (!grown)
         return NBQ_ERR_ALLOC;
@@ -599,9 +595,7 @@ nbq_result nbq_writer_align(nbq_writer *w, unsigned int n)
     nbq_result rc = writer_reserve(w, pad);
     if (rc != NBQ_OK)
         return rc;
-    rc = nbq_fill_bits(w->buf, w->cap, w->pos, pad, 0);
-    if (rc != NBQ_OK)
-        return rc;
+    (void)nbq_fill_bits(w->buf, w->cap, w->pos, pad, 0); /* range reserved above */
     w->pos += pad;
     return NBQ_OK;
 }

@@ -64,8 +64,8 @@ extern "C" {
 
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
-#define NBQ_VERSION_PATCH 1
-#define NBQ_VERSION_STRING "0.1.1"
+#define NBQ_VERSION_PATCH 2
+#define NBQ_VERSION_STRING "0.1.2"
 
 /** The three parts packed as 0x00MMmmpp, so versions compare as integers:
  *  `#if NBQ_VERSION >= 0x000200` */
@@ -295,7 +295,8 @@ nbq_result nbq_popcount_bits(const uint8_t *buf, uint64_t bit_len, uint64_t bit_
                              uint64_t *out);
 
 /** Bytes needed to hold @p bits bits. */
-#define NBQ_BYTES_FOR_BITS(bits) (((uint64_t)(bits) + 7u) / 8u)
+/* Written without "+ 7" so a bit count near UINT64_MAX cannot wrap to a small number. */
+#define NBQ_BYTES_FOR_BITS(bits) (((uint64_t)(bits) / 8u) + (((uint64_t)(bits) & 7u) ? 1u : 0u))
 
 /* ════════════════════════════════════════════════════════════════════════
  * CURSOR API -- a position that advances. Thin wrappers over the above.

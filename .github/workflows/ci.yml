@@ -2,9 +2,9 @@ name: CI
 
 # Every push and pull request runs the suite. The stages are defined once, in
 # release.sh, and run one per job here so they parallelise and a failure
-# names its job. A push to main that is green and whose version has no tag
-# yet is then tagged and released by the last job, so cutting a release is:
-# ./release.sh X.Y.Z, commit, push. See CONTRIBUTING.md §Releasing.
+# names its job. A push to main that is green then deploys the site with the
+# coverage badge, and if the version has no tag yet, tags and releases it, so
+# cutting a release is: ./release.sh X.Y.Z, commit, push. See CONTRIBUTING.md.
 
 on:
   push:
@@ -45,6 +45,39 @@ jobs:
       - uses: actions/checkout@v4
       - run: ./release.sh cmake
 
+  # Every line of the library must run under the tests. The gate is in the
+  # Makefile; this job records the number for the badge and keeps the
+  # annotated sources so a miss can be read without a local build.
+  coverage:
+    name: coverage (100% of every line, gcc + gcov)
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc
+      CXX: g++
+    outputs:
+      percent: ${{ steps.gate.outputs.percent }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: gcc --version && gcov --version
+      - id: gate
+        run: |
+          ./release.sh coverage
+          P=$(awk '/^TOTAL/ { print $4 }' build-coverage/coverage.txt)
+          echo "percent=$P" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Line coverage: ${P}%"
+            echo
+            echo '```'
+            grep -v '^TOTAL' build-coverage/coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gcov
+          path: build-coverage/*.gcov
+          if-no-files-found: ignore
+
   # Freestanding cross-compiles for every embedded target the README quotes
   # sizes for. Apple clang has every backend built in, which `make targets`
   # relies on.
@@ -64,12 +97,43 @@ jobs:
       - uses: actions/checkout@v4
       - run: ./release.sh libfuzzer
 
+  # The site is the repository as committed (pages/, docs/, the root
+  # redirect, llms.txt) plus one generated file: the coverage number the
+  # README badge reads. Only from a green main.
+  pages:
+    name: deploy site + coverage badge
+    needs: [make-check, cmake, coverage, targets, libfuzzer]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          git archive HEAD | tar -x -C _site
+          P="${{ needs.coverage.outputs.percent }}"
+          if [ "$P" = "100.0" ]; then COLOR=brightgreen; else COLOR=red; fi
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$P" "$COLOR" \
+            > _site/coverage-badge.json
+          cat _site/coverage-badge.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
   # Only on a push to main, only after every job above passed, and only if
   # the version in nbitq.h has no tag yet. Re-running on a version that is
   # already tagged is a no-op, so pushing a doc fix to main releases nothing.
   release:
     name: tag + GitHub release
-    needs: [make-check, cmake, targets, libfuzzer]
+    needs: [make-check, cmake, coverage, targets, libfuzzer]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

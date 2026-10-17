@@ -66,6 +66,10 @@ nbitq.c
 Compile `nbitq.c` with `-std=c99`. The header is `extern "C"`, so it
 compiles as C++ too. Nothing else is needed.
 
+From C++, `nbitq.hpp` (optional, header-only, C++11) wraps the cursor API
+as `nbq::Reader`, `nbq::Writer` and `nbq::OwningWriter`. Each method is one
+call into the C library; it adds ownership and nothing else.
+
 Optional pieces:
 
 - `nbitq_container.h` / `nbitq_container.c`: an in-memory `.nbq` wrapper
@@ -108,9 +112,10 @@ nbq_get_u32(buf, 24, 5, 12, &offset); /* offset == 3000 */
 | Path | What it is |
 |---|---|
 | `nbitq.h`, `nbitq.c` | the library |
+| `nbitq.hpp` | header-only C++ wrapper over the cursor API; forwards, adds nothing |
 | `nbitq_container.h`, `nbitq_container.c` | optional `.nbq` container and CRC-64 |
 | `test_nbitq.c`, `test_nbitq_container.c` | exhaustive tests (every width, base, offset) |
-| `test_nbitq_cxx.cpp` | proves the headers compile and link from C++ |
+| `test_nbitq_cxx.cpp` | the headers and `nbitq.hpp` from C++; calls every wrapper method |
 | `fuzz_nbitq.c` | libFuzzer harness; also runs standalone with a fixed-seed PRNG |
 | `Makefile`, `CMakeLists.txt` | two independent builds; both must stay green |
 | `release.sh` | the whole CI suite as one script, plus the version bump |
@@ -122,7 +127,8 @@ nbq_get_u32(buf, 24, 5, 12, &offset); /* offset == 3000 */
 ## Building and testing
 
 ```sh
-make check        # tests, ASan+UBSan, fuzz, C++ link, NBQ_NO_MALLOC, sizes
+make check        # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC, sizes
+make coverage     # every line of the library executed by the tests, or fail
 make targets      # six freestanding cross-compiles (needs clang)
 ./release.sh      # everything CI runs, in order; exits non-zero on any failure
 ```
@@ -141,6 +147,13 @@ Expectations for a change:
   includes a hosted header.
 - New behaviour gets a test in `test_nbitq.c`. The suite counts checks;
   the count goes up, never down.
+- `make coverage` stays at 100% of lines for `nbitq.c`, `nbitq_container.c`,
+  `nbitq.h` and `nbitq.hpp`. CI runs it with gcc and gcov. A line that
+  cannot run on a 64-bit host is marked `LCOV_EXCL_LINE` with its reason;
+  there are two. That marker is not a way to skip a test that could be
+  written.
+- A new cursor function in `nbitq.h` gets a one-line forwarder in
+  `nbitq.hpp` and a call in `test_nbitq_cxx.cpp`.
 - Any number quoted in docs (bytes, sizes, check counts) was produced by
   running a command, not estimated. Re-run and update it if it changes.
 - `docs/` and `pages/` say the same thing in the same plain register.

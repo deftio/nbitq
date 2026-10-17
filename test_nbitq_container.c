@@ -192,6 +192,58 @@ static void test_unchecked_still_validates_lengths(void)
     CHECK(nbq_container_read_unchecked(good, 3, &c) != NBQ_OK, "unchecked refuses a short buffer");
 }
 
+/* Frames long enough to pass the length check, each with one fault in the
+   header: refused as malformed, never read past, by both parse paths. */
+static void test_malformed_headers_are_refused(void)
+{
+    static const struct {
+        const char *what;
+        uint8_t hdr[8];
+        size_t n;
+    } T[] = {
+        {"overlong type_len varint", {0x80, 0x00}, 2},
+        {"type_len 257, past NBQ_TYPE_MAX", {0x81, 0x02}, 2},
+        {"type_len 100, past the end of the frame", {0x64}, 1},
+        {"overlong payload_bits varint", {0x00, 0x80, 0x00}, 3},
+        {"a payload of 2^40 bits", {0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x20}, 7},
+    };
+    uint8_t f[14];
+    nbq_container c;
+
+    for (size_t i = 0; i < sizeof(T) / sizeof(T[0]); i++) {
+        memset(f, 0, sizeof(f));
+        f[0] = 'N';
+        f[1] = 'B';
+        f[2] = 'Q';
+        f[3] = 1;
+        memcpy(f + 4, T[i].hdr, T[i].n);
+        CHECK(nbq_container_read(f, sizeof(f), &c) == NBQ_ERR_MALFORMED, "%s", T[i].what);
+        CHECK(nbq_container_read_unchecked(f, sizeof(f), &c) == NBQ_ERR_MALFORMED,
+              "%s (unchecked)", T[i].what);
+    }
+}
+
+static void test_write_refusals(void)
+{
+    uint8_t out[64], payload[2] = {0xAE, 0x10};
+    char big[NBQ_TYPE_MAX + 1];
+    size_t n = 0;
+
+    memset(big, 'x', sizeof(big));
+    CHECK(nbq_container_write(NULL, sizeof(out), "t", 1, payload, 12, &n) == NBQ_ERR_PARAM,
+          "null out");
+    CHECK(nbq_container_write(out, sizeof(out), NULL, 1, payload, 12, &n) == NBQ_ERR_PARAM,
+          "null type with a length");
+    CHECK(nbq_container_write(out, sizeof(out), "t", 1, NULL, 12, &n) == NBQ_ERR_PARAM,
+          "null payload with bits");
+    CHECK(nbq_container_write(out, sizeof(out), big, sizeof(big), payload, 12, &n) ==
+              NBQ_ERR_PARAM,
+          "type longer than NBQ_TYPE_MAX");
+    CHECK(nbq_crc64_update(NBQ_CRC64_INIT, NULL, 5) == NBQ_CRC64_INIT,
+          "crc64_update tolerates a null pointer");
+}
+
+
 int main(void)
 {
     test_crc64_published_vector();
@@ -200,6 +252,8 @@ int main(void)
     test_empty_type_and_empty_payload();
     test_rejections();
     test_unchecked_still_validates_lengths();
+    test_malformed_headers_are_refused();
+    test_write_refusals();
     printf("nbitq_container: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

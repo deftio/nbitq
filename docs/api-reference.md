@@ -17,7 +17,8 @@ Parameter conventions, used throughout:
 ## Overview
 
 Every function, by group. The sections below give signatures and the
-details.
+details. From C++, `nbitq.hpp` wraps the cursor groups as `nbq::Reader`,
+`nbq::Writer` and `nbq::OwningWriter`; see [C++ wrapper](#c-wrapper).
 
 **Version and errors**
 
@@ -106,7 +107,7 @@ is written and no cursor moves.
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
 #define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.1.1"
+#define NBQ_VERSION_STRING "0.1.2"
 #define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
 
 const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
@@ -356,6 +357,71 @@ inserting the 3-bit value 6 at bit 5 gives `9E BB 8A A0`, 27 bits, and the
 fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores
 `9D DC 55`. An insert that would pass `cap` fails with `NBQ_ERR_RANGE` and
 moves nothing. Insertion is linear in the number of bits after `pos`.
+
+## C++ wrapper
+
+`#include "nbitq.hpp"`; header-only, C++11, includes `nbitq.h`. Three
+classes in namespace `nbq`, every method one call into the C function of
+the same name with the `nbq_read_` / `nbq_write_` prefix dropped. Results
+are `nbq_result`, as in C. Nothing from the standard library; no exceptions.
+
+```cpp
+namespace nbq {
+
+class Reader {                       /* over nbq_reader; copyable */
+    Reader();                        /* empty: every read fails until init */
+    Reader(const uint8_t *buf, uint64_t bit_len);
+    nbq_result init(const uint8_t *buf, uint64_t bit_len);
+    const uint8_t *buffer() const;   uint64_t length() const;
+    uint64_t pos() const;            uint64_t remaining() const;
+    nbq_result seek(uint64_t bit_pos);
+    nbq_result align(unsigned n);
+    nbq_result u64(unsigned n, uint64_t *out);          /* nbq_read_u64 */
+    nbq_result s64(unsigned n, int64_t *out);
+    nbq_result u32(unsigned n, uint32_t *out);
+    nbq_result s32(unsigned n, int32_t *out);
+    nbq_result parts(unsigned n, nbq_u64_parts *out);
+    nbq_result varint(unsigned base, uint64_t *out);
+    nbq_result varint_s(unsigned base, int64_t *out);
+    nbq_result bits(uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
+    nbq_result f32(float *out);      nbq_result f64(double *out);
+    nbq_reader *handle();            /* the C struct; a const overload too */
+};
+
+class Writer {                       /* over nbq_writer; not copyable */
+    Writer();                        /* empty: every write fails until init */
+    Writer(uint8_t *buf, uint64_t bit_cap);
+    nbq_result init(uint8_t *buf, uint64_t bit_cap);
+    uint8_t *buffer();               uint64_t capacity() const;
+    uint64_t pos() const;
+    nbq_result seek(uint64_t bit_pos);
+    nbq_result align(unsigned n);
+    nbq_result u64(unsigned n, uint64_t value);         /* nbq_write_u64 */
+    nbq_result s64(unsigned n, int64_t value);
+    nbq_result u32(unsigned n, uint32_t value);
+    nbq_result s32(unsigned n, int32_t value);
+    nbq_result parts(unsigned n, nbq_u64_parts value);
+    nbq_result varint(unsigned base, uint64_t value);
+    nbq_result varint_s(unsigned base, int64_t value);
+    nbq_result bits(const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);
+    nbq_result f32(float value);     nbq_result f64(double value);
+    nbq_writer *handle();
+};
+
+class OwningWriter : public Writer { /* nbq_writer_init_alloc; absent under NBQ_NO_MALLOC */
+    OwningWriter();                  /* empty until init */
+    explicit OwningWriter(uint64_t initial_bits);
+    nbq_result init(uint64_t initial_bits);  /* frees what it owned; 0 = default size */
+    ~OwningWriter();                 /* nbq_writer_free */
+    /* movable, not copyable */
+};
+
+}
+```
+
+A failed `init` leaves the object empty rather than half-set. The indexed
+functions have no state to wrap and are called directly from C++. A new
+cursor function in `nbitq.h` gets a one-line forwarder here.
 
 ## Container
 

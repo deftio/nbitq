@@ -6,8 +6,8 @@
 #                                version to 0.2.0 everywhere it is written and
 #                                re-run the tests against the new header
 #   ./release.sh 0.2.0 --commit  ...and commit the bump as "Release v0.2.0"
-#   ./release.sh <stage>         one stage only: check | cmake | targets |
-#                                libfuzzer | version
+#   ./release.sh <stage>         one stage only: check | cmake | coverage |
+#                                targets | libfuzzer | version
 #
 # .github/workflows/ci.yml runs the stages one per job, so this file is the
 # definition of "CI is green". The release itself is a push to main: the CI
@@ -16,7 +16,7 @@
 #
 # Needs: a C99 compiler and make. clang for `targets` (and for `libfuzzer`,
 # which Apple's clang cannot run; that stage is skipped outside CI when the
-# toolchain lacks it). cmake for `cmake`.
+# toolchain lacks it). cmake for `cmake`. gcov or llvm-cov for `coverage`.
 #
 # Copyright (c) 2026 deftio / M. A. Chatterjee, BSD-2-Clause.
 
@@ -57,6 +57,20 @@ stage_cmake() {
     cmake --build "$BUILD_DIR" 2>&1 | tee "$LOG/cmake.log"
     no_warnings "$LOG/cmake.log"
     ctest --test-dir "$BUILD_DIR" --output-on-failure
+}
+
+stage_coverage() {
+    say "coverage: every line of nbitq.c, nbitq_container.c, nbitq.h and nbitq.hpp"
+    if ! make -s coverage-tool >"$LOG/covtool.log" 2>&1; then
+        if [ -n "${CI:-}" ]; then
+            cat "$LOG/covtool.log"; die "no gcov tool for ${CC:-cc}"
+        fi
+        echo "  SKIP: $(cat "$LOG/covtool.log")"
+        SKIPPED+=("coverage")
+        return 0
+    fi
+    make coverage 2>&1 | tee "$LOG/coverage.log"
+    no_warnings "$LOG/coverage.log"
 }
 
 stage_targets() {
@@ -191,7 +205,7 @@ STAGES=()
 SKIPPED=()
 for a in "$@"; do
     case "$a" in
-        check|cmake|targets|libfuzzer|version) STAGES+=("$a") ;;
+        check|cmake|coverage|targets|libfuzzer|version) STAGES+=("$a") ;;
         --commit) COMMIT=1 ;;
         --fuzz-seconds=*) FUZZ_SECONDS=${a#*=} ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -211,6 +225,7 @@ stage_version >/dev/null
 [ -z "$NEW" ] || precheck "$NEW"
 stage_check
 stage_cmake
+stage_coverage
 stage_targets
 stage_libfuzzer
 

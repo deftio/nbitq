@@ -10,6 +10,39 @@ keep each section self-contained.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-17
+
+### Added
+- `nbitq.hpp`: a header-only C++11 wrapper over the cursor API, as
+  `nbq::Reader`, `nbq::Writer` and `nbq::OwningWriter`. Each method is one
+  call into the C library with the `nbq_read_` / `nbq_write_` prefix
+  dropped. No exceptions, nothing from the standard library; the indexed
+  functions are not wrapped.
+- `make coverage`: builds the library with gcov instrumentation, runs every
+  test binary against it and fails unless every line of nbitq.c,
+  nbitq_container.c, nbitq.h and nbitq.hpp ran. CI runs it with gcc and
+  gcov and publishes the result as the README badge.
+- Tests for every refusal at every entry point, the cursor forms of signed
+  64-bit values, hi/lo parts and bit runs, reader remaining/seek/align
+  edges, the allocating writer's limits and malformed container headers.
+  The C++ test calls every method of the wrapper and every inline function
+  in nbitq.h.
+
+### Fixed
+- `NBQ_BYTES_FOR_BITS` wrapped to a small number for bit counts within 7 of
+  UINT64_MAX; `nbq_writer_init_alloc(w, UINT64_MAX)` now returns
+  NBQ_ERR_ALLOC instead of a zero-capacity writer.
+
+### Changed
+- Removed branches the tests proved unreachable: a `shift >= 64` case in
+  `nbq_get_varint` that `groups_limit` already prevents, a fill that cannot
+  fail after `nbq_writer_align` has reserved its range, and the per-field
+  checks in `nbq_container_write` for a buffer `nbq_container_size` has
+  already sized. Nothing observable changes; the container is 32 bytes
+  smaller at -Oz.
+- The website has a favicon and the README badges show GitHub release,
+  coverage and licence.
+
 ## [0.1.1] - 2026-10-17
 
 ### Added
@@ -53,6 +86,7 @@ implementation is new.
 - An out-of-range width is an error rather than silently clamped.
 - The indexed and cursor paths share one implementation.
 
-[Unreleased]: https://github.com/deftio/nbitq/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/deftio/nbitq/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/deftio/nbitq/releases/tag/v0.1.2
 [0.1.1]: https://github.com/deftio/nbitq/releases/tag/v0.1.1
 [0.1.0]: https://github.com/deftio/nbitq/releases/tag/v0.1.0

@@ -29,6 +29,14 @@ Two rules are about the repository rather than the bits:
   code sizes in `README.md`, `docs/` and `pages/` are measured. If your
   change moves one, re-run `make check` / `make targets` and update them in
   the same pull request.
+- **Every line runs under the tests.** `make coverage` instruments the
+  library, runs all four test binaries and fails below 100% of lines in
+  `nbitq.c`, `nbitq_container.c`, `nbitq.h` and `nbitq.hpp`. CI runs it with
+  gcc and gcov on Linux; locally it works with gcc and gcov, or clang and
+  llvm-cov. A line that cannot run on a 64-bit host may be marked
+  `LCOV_EXCL_LINE` with its reason; there are two, and the marker is not a
+  way to skip a test that could be written. A new cursor function gets a
+  forwarder in `nbitq.hpp` and a call in `test_nbitq_cxx.cpp`.
 
 ## Building and testing
 
@@ -36,7 +44,8 @@ You need a C99 compiler and `make`. `make targets` needs clang; CMake is
 optional.
 
 ```bash
-make check      # tests, ASan+UBSan, fuzz, C++ link, NBQ_NO_MALLOC build, sizes
+make check      # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC build, sizes
+make coverage   # every line of the library executed by the tests, or fail
 make targets    # freestanding cross-compile for Cortex-M, ARM, AArch64, x86-64
 ./release.sh    # everything CI runs, in one go
 ```

@@ -1,8 +1,9 @@
 # nbitq
 
 [![CI](https://github.com/deftio/nbitq/actions/workflows/ci.yml/badge.svg)](https://github.com/deftio/nbitq/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/deftio/nbitq?sort=semver)](https://github.com/deftio/nbitq/releases)
-[![License: BSD-2-Clause](https://img.shields.io/badge/license-BSD--2--Clause-blue.svg)](LICENSE.txt)
+[![Coverage](https://img.shields.io/endpoint?url=https://deftio.github.io/nbitq/coverage-badge.json)](https://github.com/deftio/nbitq/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/deftio/nbitq?sort=semver&logo=github&logoColor=white&label=GitHub&color=24292F)](https://github.com/deftio/nbitq/releases)
+[![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-0A5C9E)](LICENSE.txt)
 
 **Read and write integers of any bit width, at any bit position, in C.**
 
@@ -98,6 +99,7 @@ nbitq.c
 There is no configuration and nothing to generate. `nbitq.h` is
 `extern "C"`, so it compiles as C++ as well. The optional container is
 `nbitq_container.{h,c}`; see [Containers](#optional-storing-a-bit-run-in-a-file).
+`nbitq.hpp` is an optional header-only wrapper for C++; see [From C++](#from-c).
 
 <details>
 <summary>CMake</summary>
@@ -113,10 +115,41 @@ or
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.1.1)
+    GIT_TAG        v0.1.2)
 FetchContent_MakeAvailable(nbitq)
 ```
 </details>
+
+## Vendoring
+
+Copying the two files is the intended way to depend on nbitq. To keep a
+vendored copy honest, record which release it came from and let the
+compiler refuse an old one. The header defines `NBQ_VERSION` as a packed
+integer, `(major << 16) | (minor << 8) | patch`, so a guard is one
+comparison. Next to the first `#include "nbitq.h"` in the vendoring
+project:
+
+```c
+#include "nbitq.h"
+
+/* the oldest nbitq this project has been tested with */
+#define NBQ_VERSION_NEEDED ((0 << 16) | (1 << 8) | 1)
+
+#if NBQ_VERSION < NBQ_VERSION_NEEDED
+#error "vendored nbitq is older than this project needs; see nbitq/CHANGELOG.md"
+#endif
+```
+
+Set the three numbers to the release the project was tested with and
+raise them only when a newer feature is used. At run time,
+`nbq_version_string()` returns the same version as a string for logs and
+`--version` output, which tells a bug report which copy was in the build.
+
+When updating the copy, take the files from a tagged release
+(`git checkout vX.Y.Z` in a clone of nbitq) rather than from `main`, and
+mention the tag in the commit that updates them. The bit numbering, varint
+format and result codes are fixed across releases, so a newer copy reads
+what an older one wrote.
 
 ## Where it fits, and where it does not
 
@@ -248,6 +281,36 @@ nbq_get_parts(buf, bit_len, bit_pos, 48, &p);   /* p.hi, p.lo — 32-bit maths o
 
 It produces the same bits as `nbq_get_u64`; only the arithmetic differs.
 
+### From C++
+
+The headers are `extern "C"`, so every function above works unchanged from
+C++. `nbitq.hpp` adds the cursor API as classes. Each method is one call
+into the C library with the `nbq_read_` or `nbq_write_` prefix dropped, so
+`nbq_read_u32(&r, n, &v)` is `r.u32(n, &v)`:
+
+```cpp
+#include "nbitq.hpp"     // includes nbitq.h; header-only, C++11
+
+uint8_t buf[64] = {0};
+nbq::Writer w(buf, sizeof(buf) * 8);
+w.u32(5, 19);
+w.u32(12, 3000);
+w.varint(8, 300);
+
+nbq::Reader r(buf, w.pos());
+uint32_t symbol, offset;
+r.u32(5, &symbol);
+r.u32(12, &offset);
+```
+
+`nbq::OwningWriter` is the growing writer with `nbq_writer_free` in its
+destructor; it moves and does not copy. `handle()` returns the C struct for
+code that takes one. The wrapper returns `nbq_result` like the C API and
+uses nothing from the standard library, so `-fno-exceptions` and
+freestanding C++ builds are unaffected. It does not wrap the indexed
+functions, which have no state to wrap; call them directly. `make cxx`
+compiles, links and runs its tests, one per method.
+
 ## Fixed conventions
 
 - **Bit 0 is the most significant bit of byte 0**, and fields are written
@@ -271,11 +334,11 @@ every `#include` of a hosted header — the library then builds
 
 | target | `.text` |
 |---|---:|
-| **Cortex-M3/M4/M7** (Thumb-2) | **4,843 bytes** |
-| Cortex-M0 (Thumb-1) | 5,085 |
-| ARM (v7-A) | 7,317 |
-| AArch64 | 4,401 |
-| x86-64 | 4,559 |
+| **Cortex-M3/M4/M7** (Thumb-2) | **4,793 bytes** |
+| Cortex-M0 (Thumb-1) | 5,025 |
+| ARM (v7-A) | 7,249 |
+| AArch64 | 4,389 |
+| x86-64 | 4,545 |
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state, so it
 is reentrant per instance. Reproduce with `make targets`.
@@ -362,7 +425,8 @@ codec-grade throughput, use a codec's reader.
 ## Testing
 
 ```bash
-make check      # tests, sanitizers, fuzzing, C++ build, code size
+make check      # tests, sanitizers, fuzzing, C++ tests, code size
+make coverage   # every line of the library executed by the tests, or fail
 make targets    # cross-compile freestanding for embedded targets
 ```
 
@@ -377,8 +441,17 @@ that decodes must re-encode to identical bits; the 64-bit, 32-bit and hi/lo
 paths must agree read-for-read; a failed read must leave the cursor
 untouched; a copied bit run must compare equal to its source.
 
-Measured: 76,875 core checks, 2,065 container checks, and 2,901,892 libFuzzer
-runs, all under AddressSanitizer and UndefinedBehaviorSanitizer, all clean.
+Measured: 76,971 core checks, 2,080 container checks, 172 checks of the C++
+wrapper, and 2,901,892 libFuzzer runs, all under AddressSanitizer and
+UndefinedBehaviorSanitizer, all clean.
+
+Line coverage is a gate, not a report. `make coverage` builds the library
+once with gcov instrumentation, runs all four test binaries against it and
+fails unless every line of `nbitq.c`, `nbitq_container.c`, `nbitq.h` and
+`nbitq.hpp` ran. Two lines are excluded, both guards that only a 32-bit
+`size_t` can reach, and each says so where it stands. CI runs the gate with
+gcc and gcov on Linux and publishes the number as the badge at the top of
+this page.
 
 ## Background
 

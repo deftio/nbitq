@@ -16,3 +16,12 @@ crash-*
 timeout-*
 oom-*
 corpus/
+
+# Coverage
+build-coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# GitHub Pages site assembled by CI
+_site/

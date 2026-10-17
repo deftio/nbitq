@@ -98,6 +98,7 @@ needs next:
 | A span of bits moved elsewhere | `nbq_copy_bits` from any offset to any offset, overlap-safe |
 | Compare, fill, count | `nbq_compare_bits`, `nbq_fill_bits`, `nbq_popcount_bits` |
 | A float or double | `nbq_get_f32` / `nbq_put_f32`, `nbq_get_f64` / `nbq_put_f64`: IEEE-754 bit patterns, header-only |
+| From C++ | `nbitq.hpp`: `nbq::Reader`, `nbq::Writer`, `nbq::OwningWriter`; each method one call into the C library |
 | 64-bit values on a 32-bit CPU | `nbq_get_parts` / `nbq_put_parts`, using only 32-bit arithmetic |
 | A bit run stored in a file | the optional `.nbq` container: length, type string, CRC-64 |
 

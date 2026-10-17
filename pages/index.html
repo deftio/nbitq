@@ -96,6 +96,7 @@
             { Operation: 'A span of bits moved elsewhere', nbitq: 'nbq_copy_bits from any offset to any offset, overlap-safe' },
             { Operation: 'Compare, fill, count', nbitq: 'nbq_compare_bits, nbq_fill_bits, nbq_popcount_bits' },
             { Operation: 'A float or double', nbitq: 'nbq_get_f32 / nbq_put_f32, nbq_get_f64 / nbq_put_f64: IEEE-754 bit patterns, header-only' },
+            { Operation: 'From C++', nbitq: 'nbitq.hpp: nbq::Reader, nbq::Writer, nbq::OwningWriter; each method one call into the C library' },
             { Operation: '64-bit values on a 32-bit CPU', nbitq: 'nbq_get_parts / nbq_put_parts, 32-bit arithmetic only' },
             { Operation: 'A bit run stored in a file', nbitq: 'the optional .nbq container: length, type string, CRC-64' }
           ])

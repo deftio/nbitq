@@ -74,7 +74,7 @@ Or fetched at configure time:
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.1.1)
+    GIT_TAG        v0.1.2)
 FetchContent_MakeAvailable(nbitq)
 target_link_libraries(your_target PRIVATE nbitq)
 ```
@@ -205,11 +205,11 @@ clang --target=thumbv7em-none-eabi -Oz -std=c99 -ffreestanding -nostdinc \
 
 | target | `.text` |
 |---|---:|
-| Cortex-M3/M4/M7 (Thumb-2) | 4,843 bytes |
-| Cortex-M0 (Thumb-1) | 5,085 |
-| ARM (v7-A) | 7,317 |
-| AArch64 | 4,401 |
-| x86-64 | 4,559 |
+| Cortex-M3/M4/M7 (Thumb-2) | 4,793 bytes |
+| Cortex-M0 (Thumb-1) | 5,025 |
+| ARM (v7-A) | 7,249 |
+| AArch64 | 4,389 |
+| x86-64 | 4,545 |
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state. Each
 reader or writer is independent, so the library is reentrant per instance.
@@ -221,21 +221,41 @@ arithmetic differs.
 
 ## From C++
 
-```cpp
-#include "nbitq.h"       // extern "C" inside
+The headers are `extern "C"`, so every function works unchanged from C++.
+`nbitq.hpp` adds the cursor API as classes. Each method is one call into
+the C library with the `nbq_read_` or `nbq_write_` prefix dropped, so
+`nbq_read_u32(&r, n, &v)` is `r.u32(n, &v)`:
 
-nbq_writer w;
-nbq_writer_init(&w, buf, sizeof(buf) * 8);
-nbq_write_u32(&w, 12, 3000);
+```cpp
+#include "nbitq.hpp"     // includes nbitq.h; header-only, C++11
+
+uint8_t buf[64] = {0};
+nbq::Writer w(buf, sizeof(buf) * 8);
+w.u32(5, 19);
+w.u32(12, 3000);
+w.varint(8, 300);
+
+nbq::Reader r(buf, w.pos());
+uint32_t symbol, offset;
+r.u32(5, &symbol);
+r.u32(12, &offset);
 ```
 
-`make cxx` compiles and links both headers from a C++ translation unit to
-prove this stays true.
+`nbq::OwningWriter` is the growing writer with `nbq_writer_free` in its
+destructor; it moves and does not copy. `handle()` on any of the three
+returns the C struct for code that takes one.
+
+The wrapper returns `nbq_result` like the C API and uses nothing from the
+standard library, so `-fno-exceptions` and freestanding C++ builds are
+unaffected. It does not wrap the indexed functions, which have no state to
+wrap; call `nbq_get_u32` and the rest directly. `make cxx` compiles, links
+and runs the wrapper's tests, one per method.
 
 ## Building and testing the library itself
 
 ```sh
-make check      # tests, ASan+UBSan, fuzz, C++ link, NBQ_NO_MALLOC, code size
+make check      # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC, code size
+make coverage   # every line of the library executed by the tests, or fail
 make targets    # freestanding cross-compiles (needs clang)
 ```
 

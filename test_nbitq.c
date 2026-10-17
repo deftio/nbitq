@@ -577,6 +577,208 @@ static void test_float_is_a_bit_copy(void)
     }
 }
 
+/* ── every refusal, at every entry point ─────────────────────────────── */
+
+/* A null pointer, a width or base the function cannot serve, and a field that
+   ends past the buffer: each is refused with the documented code by every
+   function that takes it. Written out in full rather than looped, so a
+   function that forgets a check or returns the wrong code is named by the
+   failing line. */
+static void test_every_entry_point_refuses_bad_input(void)
+{
+    uint8_t buf[8] = {0};
+    const uint64_t cap = sizeof(buf) * 8;
+    uint64_t u64 = 0, next = 0;
+    int64_t s64 = 0;
+    uint32_t u32 = 0;
+    int32_t s32 = 0;
+    int cmp = 0;
+    nbq_u64_parts p = {0, 0};
+    nbq_reader r;
+    nbq_writer w;
+
+    /* null output */
+    CHECK(nbq_get_s64(buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "get_s64 null out");
+    CHECK(nbq_get_u32(buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "get_u32 null out");
+    CHECK(nbq_get_s32(buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "get_s32 null out");
+    CHECK(nbq_get_parts(buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "get_parts null out");
+    CHECK(nbq_get_varint(buf, cap, 0, 8, NULL, &next) == NBQ_ERR_PARAM, "get_varint null out");
+    CHECK(nbq_get_varint_s(buf, cap, 0, 8, NULL, &next) == NBQ_ERR_PARAM, "get_varint_s null out");
+    CHECK(nbq_compare_bits(buf, cap, 0, buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "compare null out");
+    CHECK(nbq_popcount_bits(buf, cap, 0, 8, NULL) == NBQ_ERR_PARAM, "popcount null out");
+
+    /* null buffer */
+    CHECK(nbq_get_u32(NULL, cap, 0, 8, &u32) == NBQ_ERR_PARAM, "get_u32 null buf");
+    CHECK(nbq_get_parts(NULL, cap, 0, 8, &p) == NBQ_ERR_PARAM, "get_parts null buf");
+    CHECK(nbq_put_u64(NULL, cap, 0, 8, 1) == NBQ_ERR_PARAM, "put_u64 null buf");
+    CHECK(nbq_put_u32(NULL, cap, 0, 8, 1) == NBQ_ERR_PARAM, "put_u32 null buf");
+    CHECK(nbq_put_parts(NULL, cap, 0, 8, p) == NBQ_ERR_PARAM, "put_parts null buf");
+    CHECK(nbq_get_varint(NULL, cap, 0, 8, &u64, &next) == NBQ_ERR_PARAM, "get_varint null buf");
+    CHECK(nbq_put_varint(NULL, cap, 0, 8, 1, &next) == NBQ_ERR_PARAM, "put_varint null buf");
+    CHECK(nbq_copy_bits(NULL, cap, 0, buf, cap, 0, 8) == NBQ_ERR_PARAM, "copy null src");
+    CHECK(nbq_copy_bits(buf, cap, 0, NULL, cap, 0, 8) == NBQ_ERR_PARAM, "copy null dst");
+    CHECK(nbq_fill_bits(NULL, cap, 0, 8, 1) == NBQ_ERR_PARAM, "fill null buf");
+    CHECK(nbq_compare_bits(NULL, cap, 0, buf, cap, 0, 8, &cmp) == NBQ_ERR_PARAM, "compare null a");
+    CHECK(nbq_popcount_bits(NULL, cap, 0, 8, &u64) == NBQ_ERR_PARAM, "popcount null buf");
+    CHECK(nbq_reader_init(NULL, buf, cap) == NBQ_ERR_PARAM, "reader_init null reader");
+    CHECK(nbq_reader_init(&r, NULL, cap) == NBQ_ERR_PARAM, "reader_init null buf");
+    CHECK(nbq_writer_init(NULL, buf, cap) == NBQ_ERR_PARAM, "writer_init null writer");
+    CHECK(nbq_writer_init(&w, NULL, cap) == NBQ_ERR_PARAM, "writer_init null buf");
+
+    /* width 0, and one past the widest */
+    CHECK(nbq_put_u64(buf, cap, 0, 65, 1) == NBQ_ERR_PARAM, "put_u64 n=65");
+    CHECK(nbq_put_s64(buf, cap, 0, 0, -1) == NBQ_ERR_PARAM, "put_s64 n=0");
+    CHECK(nbq_put_s64(buf, cap, 0, 65, -1) == NBQ_ERR_PARAM, "put_s64 n=65");
+    CHECK(nbq_put_u32(buf, cap, 0, 33, 1) == NBQ_ERR_PARAM, "put_u32 n=33");
+    CHECK(nbq_put_s32(buf, cap, 0, 0, -1) == NBQ_ERR_PARAM, "put_s32 n=0");
+    CHECK(nbq_put_s32(buf, cap, 0, 33, -1) == NBQ_ERR_PARAM, "put_s32 n=33");
+    CHECK(nbq_get_varint(buf, cap, 0, 1, &u64, &next) == NBQ_ERR_PARAM, "get_varint base 1");
+    CHECK(nbq_get_varint(buf, cap, 0, 65, &u64, &next) == NBQ_ERR_PARAM, "get_varint base 65");
+
+    /* a field that ends one bit past the buffer; the signed forms pass the
+       code through from the unsigned ones they call */
+    CHECK(nbq_get_s64(buf, cap, cap - 7, 8, &s64) == NBQ_ERR_RANGE, "get_s64 range");
+    CHECK(nbq_get_s32(buf, cap, cap - 7, 8, &s32) == NBQ_ERR_RANGE, "get_s32 range");
+    CHECK(nbq_put_u32(buf, cap, cap - 7, 8, 1) == NBQ_ERR_RANGE, "put_u32 range");
+    CHECK(nbq_put_parts(buf, cap, cap - 7, 8, p) == NBQ_ERR_RANGE, "put_parts range");
+    CHECK(nbq_put_varint(buf, cap, cap - 7, 8, 1, &next) == NBQ_ERR_RANGE, "put_varint range");
+    CHECK(nbq_copy_bits(buf, cap, cap - 7, buf, cap, 0, 8) == NBQ_ERR_RANGE, "copy src range");
+    CHECK(nbq_compare_bits(buf, cap, cap - 7, buf, cap, 0, 8, &cmp) == NBQ_ERR_RANGE,
+          "compare range");
+
+    /* n == 0 is a no-op, not an error, and touches nothing */
+    memset(buf, 0xA5, sizeof(buf));
+    CHECK(nbq_fill_bits(buf, cap, 3, 0, 1) == NBQ_OK, "fill n=0");
+    CHECK(buf[0] == 0xA5, "fill n=0 wrote nothing");
+    CHECK(nbq_copy_bits(buf, cap, 0, buf, cap, 3, 0) == NBQ_OK, "copy n=0");
+    CHECK(buf[0] == 0xA5, "copy n=0 wrote nothing");
+}
+
+/* ── the cursor forms the exhaustive tests above do not reach ─────────── */
+
+static void test_cursor_every_type(void)
+{
+    uint8_t buf[32] = {0};
+    uint8_t src[4] = {0xA5, 0x5A, 0xFF, 0x00};
+    uint8_t dst[4] = {0};
+    nbq_writer w;
+    nbq_reader r;
+    nbq_u64_parts p = {0x12345u, 0xDEADBEEFu}, q = {0, 0};
+    int64_t s = 0;
+    uint64_t u = 0;
+    int cmp = 1;
+
+    CHECK(nbq_writer_init(&w, buf, sizeof(buf) * 8) == NBQ_OK, "writer_init");
+    CHECK(nbq_write_s64(&w, 40, -123456789012LL) == NBQ_OK, "write_s64");
+    CHECK(nbq_write_parts(&w, 52, p) == NBQ_OK, "write_parts");
+    CHECK(nbq_write_bits(&w, src, 32, 4, 20) == NBQ_OK, "write_bits");
+    CHECK(w.pos == 40 + 52 + 20, "pos after three writes: %llu", (unsigned long long)w.pos);
+
+    CHECK(nbq_reader_init(&r, buf, w.pos) == NBQ_OK, "reader_init");
+    CHECK(nbq_read_s64(&r, 40, &s) == NBQ_OK && s == -123456789012LL, "read_s64");
+    CHECK(nbq_read_parts(&r, 52, &q) == NBQ_OK && q.hi == 0x12345u && q.lo == 0xDEADBEEFu,
+          "read_parts: %llx %llx", (unsigned long long)q.hi, (unsigned long long)q.lo);
+    CHECK(nbq_read_bits(&r, dst, 32, 4, 20) == NBQ_OK, "read_bits");
+    CHECK(nbq_compare_bits(src, 32, 4, dst, 32, 4, 20, &cmp) == NBQ_OK && cmp == 0,
+          "read_bits copied the run");
+    CHECK(r.pos == w.pos && nbq_reader_remaining(&r) == 0, "reader at the end");
+
+    /* a failed read or write of a run leaves the cursor where it was */
+    CHECK(nbq_reader_seek(&r, w.pos - 10) == NBQ_OK, "seek back 10");
+    CHECK(nbq_read_bits(&r, dst, 32, 0, 20) == NBQ_ERR_RANGE && r.pos == w.pos - 10,
+          "read_bits past the end");
+    CHECK(nbq_writer_seek(&w, sizeof(buf) * 8 - 10) == NBQ_OK, "seek near the end");
+    CHECK(nbq_write_bits(&w, src, 32, 0, 20) == NBQ_ERR_RANGE && w.pos == sizeof(buf) * 8 - 10,
+          "write_bits past the end");
+    CHECK(nbq_write_varint(&w, 16, 1) == NBQ_ERR_RANGE && w.pos == sizeof(buf) * 8 - 10,
+          "write_varint past the end (16 bits into 10)");
+    CHECK(nbq_write_varint(&w, 1, 1) == NBQ_ERR_PARAM, "write_varint base 1");
+
+    /* null cursors */
+    CHECK(nbq_read_varint(NULL, 8, &u) == NBQ_ERR_PARAM, "read_varint null");
+    CHECK(nbq_read_varint_s(NULL, 8, &s) == NBQ_ERR_PARAM, "read_varint_s null");
+    CHECK(nbq_read_bits(NULL, dst, 32, 0, 8) == NBQ_ERR_PARAM, "read_bits null");
+    CHECK(nbq_write_varint(NULL, 8, 1) == NBQ_ERR_PARAM, "write_varint null");
+    CHECK(nbq_write_bits(NULL, src, 32, 0, 8) == NBQ_ERR_PARAM, "write_bits null");
+}
+
+static void test_remaining_seek_and_align_edges(void)
+{
+    uint8_t buf[4] = {0};
+    nbq_reader r;
+    nbq_writer w;
+
+    CHECK(nbq_reader_init(&r, buf, 30) == NBQ_OK, "reader over 30 bits");
+    CHECK(nbq_reader_remaining(&r) == 30, "remaining at start");
+    CHECK(nbq_reader_seek(&r, 12) == NBQ_OK && nbq_reader_remaining(&r) == 18,
+          "remaining after seek");
+    CHECK(nbq_reader_seek(&r, 31) == NBQ_ERR_RANGE && r.pos == 12, "seek past the end refused");
+    CHECK(nbq_reader_seek(&r, 30) == NBQ_OK && nbq_reader_remaining(&r) == 0,
+          "seek to the end allowed");
+    CHECK(nbq_reader_seek(NULL, 0) == NBQ_ERR_PARAM, "reader_seek null");
+    CHECK(nbq_reader_remaining(NULL) == 0, "remaining of null is 0");
+
+    CHECK(nbq_reader_seek(&r, 16) == NBQ_OK && nbq_reader_align(&r, 8) == NBQ_OK && r.pos == 16,
+          "align when already aligned is a no-op");
+    CHECK(nbq_reader_seek(&r, 26) == NBQ_OK && nbq_reader_align(&r, 8) == NBQ_ERR_RANGE &&
+              r.pos == 26,
+          "align whose padding would cross the end");
+    CHECK(nbq_reader_align(NULL, 8) == NBQ_ERR_PARAM, "reader_align null");
+    CHECK(nbq_reader_align(&r, 0) == NBQ_ERR_PARAM, "reader_align n=0");
+
+    CHECK(nbq_writer_init(&w, buf, 30) == NBQ_OK, "writer over 30 bits");
+    CHECK(nbq_writer_align(NULL, 8) == NBQ_ERR_PARAM, "writer_align null");
+    CHECK(nbq_writer_align(&w, 0) == NBQ_ERR_PARAM, "writer_align n=0");
+    CHECK(nbq_writer_seek(&w, 26) == NBQ_OK && nbq_writer_align(&w, 8) == NBQ_ERR_RANGE &&
+              w.pos == 26,
+          "writer align past a fixed capacity");
+    CHECK(nbq_writer_seek(NULL, 0) == NBQ_ERR_PARAM, "writer_seek null");
+    CHECK(nbq_writer_seek(&w, 31) == NBQ_ERR_RANGE && w.pos == 26,
+          "fixed writer: seek past capacity");
+}
+
+#ifndef NBQ_NO_MALLOC
+/* The allocating writer's limits: what it refuses, and that a refusal leaves
+   the writer usable. The impossible sizes are real requests the allocator
+   turns down. Under ASan that needs allocator_may_return_null=1, which the
+   Makefile and CMakeLists.txt set for these tests. */
+static void test_allocating_writer_limits(void)
+{
+    nbq_writer w;
+    uint8_t src[1] = {0xFF};
+    uint32_t v = 0;
+
+    CHECK(nbq_writer_init_alloc(NULL, 64) == NBQ_ERR_PARAM, "init_alloc null");
+
+    CHECK(nbq_writer_init_alloc(&w, 0) == NBQ_OK, "0 bits means a default size");
+    CHECK(w.cap == 512 && w.owns_buf, "default is 512 bits");
+    nbq_writer_free(&w);
+    CHECK(w.buf == NULL && w.cap == 0 && !w.owns_buf, "free clears the writer");
+    nbq_writer_free(&w); /* a second free is a no-op */
+    nbq_writer_free(NULL);
+
+    CHECK(nbq_writer_init_alloc(&w, UINT64_MAX) == NBQ_ERR_ALLOC, "an impossible size is refused");
+
+    CHECK(nbq_writer_init_alloc(&w, 64) == NBQ_OK, "init_alloc 64");
+    CHECK(nbq_write_u32(&w, 32, 0xC0FFEE) == NBQ_OK, "write before growing");
+    /* a run so long that doubling the capacity would overflow */
+    CHECK(nbq_write_bits(&w, src, 8, 0, ((uint64_t)1 << 63) + 1u) == NBQ_ERR_ALLOC,
+          "growth that would overflow");
+    /* a run the allocator cannot satisfy */
+    CHECK(nbq_write_bits(&w, src, 8, 0, (uint64_t)1 << 61) == NBQ_ERR_ALLOC, "growth refused");
+    CHECK(w.pos == 32 && w.cap == 64, "a refused growth changes nothing");
+    CHECK(nbq_get_u32(w.buf, w.cap, 0, 32, &v) == NBQ_OK && v == 0xC0FFEE, "the buffer is intact");
+
+    /* seeking past the capacity of an owning writer grows it */
+    CHECK(nbq_writer_seek(&w, 1000) == NBQ_OK && w.pos == 1000 && w.cap >= 1000, "seek grows");
+    CHECK(nbq_write_u32(&w, 32, 7) == NBQ_OK, "write after the seek");
+    CHECK(nbq_writer_seek(&w, (uint64_t)1 << 61) == NBQ_ERR_ALLOC && w.pos == 1032,
+          "a seek that cannot be satisfied leaves the position");
+    nbq_writer_free(&w);
+}
+#endif
+
+
 int main(void)
 {
     test_u64_every_width_and_offset();
@@ -599,6 +801,12 @@ int main(void)
     test_strerror_covers_every_code();
     test_version_is_self_reported();
     test_float_is_a_bit_copy();
+    test_every_entry_point_refuses_bad_input();
+    test_cursor_every_type();
+    test_remaining_seek_and_align_edges();
+#ifndef NBQ_NO_MALLOC
+    test_allocating_writer_limits();
+#endif
 
     printf("nbitq: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

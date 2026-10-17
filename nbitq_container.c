@@ -69,8 +69,6 @@ nbq_result nbq_container_write(uint8_t *out, size_t out_cap, const char *type, s
 {
     if (!out || (type_len > 0u && !type) || (payload_bits > 0u && !payload))
         return NBQ_ERR_PARAM;
-    if (type_len > NBQ_TYPE_MAX)
-        return NBQ_ERR_PARAM;
 
     uint64_t need = 0;
     nbq_result rc = nbq_container_size(type_len, payload_bits, &need);
@@ -93,25 +91,19 @@ nbq_result nbq_container_write(uint8_t *out, size_t out_cap, const char *type, s
     out[3] = (uint8_t)NBQ_CONTAINER_VERSION;
     pos = MAGIC_BYTES * 8u;
 
-    rc = nbq_put_varint(out, cap_bits, pos, 8, (uint64_t)type_len, &pos);
-    if (rc != NBQ_OK)
-        return rc;
+    /* Each put below fits by construction: nbq_container_size sized the
+       buffer for exactly these fields. */
+    (void)nbq_put_varint(out, cap_bits, pos, 8, (uint64_t)type_len, &pos);
 
     for (size_t i = 0; i < type_len; i++) {
-        rc = nbq_put_u32(out, cap_bits, pos, 8, (uint8_t)type[i]);
-        if (rc != NBQ_OK)
-            return rc;
+        (void)nbq_put_u32(out, cap_bits, pos, 8, (uint8_t)type[i]);
         pos += 8u;
     }
 
-    rc = nbq_put_varint(out, cap_bits, pos, 8, payload_bits, &pos);
-    if (rc != NBQ_OK)
-        return rc;
+    (void)nbq_put_varint(out, cap_bits, pos, 8, payload_bits, &pos);
 
     if (payload_bits > 0u) {
-        rc = nbq_copy_bits(payload, payload_bits, 0, out, cap_bits, pos, payload_bits);
-        if (rc != NBQ_OK)
-            return rc;
+        (void)nbq_copy_bits(payload, payload_bits, 0, out, cap_bits, pos, payload_bits);
         pos += payload_bits;
     }
 

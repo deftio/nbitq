@@ -33,6 +33,13 @@
   // toggled with bw.toggleThemeMode() and remembered per browser.
   function initStyles() {
     bw.loadStyles();
+    // Favicon: the keycap-ten emoji as an SVG data URI, so there is no image
+    // file to keep in step with anything.
+    var icon = document.createElement('link');
+    icon.rel = 'icon';
+    icon.href = 'data:image/svg+xml,' + encodeURIComponent(
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\uD83D\uDD1F</text></svg>");
+    document.head.appendChild(icon);
     styles = bw.loadStyles({
       primary: '#1f5f8b',
       secondary: '#5a6b7c',
