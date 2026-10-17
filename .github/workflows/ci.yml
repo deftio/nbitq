@@ -32,7 +32,7 @@ jobs:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: $CC --version && $CXX --version
       - run: ./release.sh check
 
@@ -42,7 +42,7 @@ jobs:
     name: cmake + ctest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: ./release.sh cmake
 
   # Every line of the library must run under the tests. The gate is in the
@@ -57,7 +57,7 @@ jobs:
     outputs:
       percent: ${{ steps.gate.outputs.percent }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: gcc --version && gcov --version
       - id: gate
         run: |
@@ -71,7 +71,7 @@ jobs:
             grep -v '^TOTAL' build-coverage/coverage.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: gcov
@@ -85,7 +85,7 @@ jobs:
     name: freestanding targets
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: ./release.sh targets
 
   # The real coverage-guided engine, which Apple clang lacks, so Linux. With
@@ -94,7 +94,7 @@ jobs:
     name: libFuzzer (60s)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: ./release.sh libfuzzer
 
   # The site is the repository as committed (pages/, docs/, the root
@@ -112,7 +112,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Assemble the site
         run: |
           mkdir -p _site
@@ -122,11 +122,11 @@ jobs:
           printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$P" "$COLOR" \
             > _site/coverage-badge.json
           cat _site/coverage-badge.json
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   # Only on a push to main, only after every job above passed, and only if
   # the version in nbitq.h has no tag yet. Re-running on a version that is
@@ -139,7 +139,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # tags
 
