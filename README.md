@@ -22,7 +22,7 @@ uint32_t v;
 nbq_get_u32(buf, sizeof(buf) * 8, 13, 12, &v);   /* v == 3000 */
 ```
 
-Two files, C99, no dependencies, about 4.7 KB compiled.
+Two files, C99, no dependencies, about 5.9 KB compiled.
 
 ## Quickstart
 
@@ -117,7 +117,7 @@ or
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.1.2)
+    GIT_TAG        v0.2.0)
 FetchContent_MakeAvailable(nbitq)
 ```
 </details>
@@ -135,7 +135,7 @@ project:
 #include "nbitq.h"
 
 /* the oldest nbitq this project has been tested with */
-#define NBQ_VERSION_NEEDED ((0 << 16) | (1 << 8) | 1)
+#define NBQ_VERSION_NEEDED ((0 << 16) | (2 << 8) | 0)
 
 #if NBQ_VERSION < NBQ_VERSION_NEEDED
 #error "vendored nbitq is older than this project needs; see nbitq/CHANGELOG.md"
@@ -175,7 +175,8 @@ run without a heap.
 
 Every operation exists in two forms. **Indexed** functions take an explicit
 position and hold no state. **Cursor** functions use a reader or writer
-struct that holds a position and advances it.
+struct that holds a position and advances it. Both come in either bit order;
+see [Bit order](#bit-order-msb-first-or-lsb-first).
 
 ### Indexed — `(buffer, bit_length, bit_position)`
 
@@ -213,6 +214,46 @@ member of another struct. There is no create/destroy pair.
 grows it; `nbq_writer_free(&w)` releases it. It is the only function in the
 library that allocates, and it can be compiled out; see
 [Embedded](#embedded).
+
+### Bit order: MSB first, or LSB first
+
+A bit stream is numbered from one end of each byte or the other, and real
+formats are split: H.264, MPEG and most network formats start at the most
+significant bit, DEFLATE and Vorbis at the least. nbitq handles both. The
+plain names are MSB first. Every indexed function has an `_le` twin with
+the same signature that is LSB first, and a `_be` spelling of the plain
+name so that code comparing two streams reads symmetrically:
+
+```c
+nbq_get_u32_be(h264, bits, pos, 5, &a);     /* MSB first; the same as nbq_get_u32 */
+nbq_get_u32_le(deflate, bits, pos, 5, &b);  /* LSB first */
+```
+
+A cursor carries its stream's order instead, set once by `nbq_reader_init_le`
+or `nbq_writer_init_le`. Every read and write through it follows, and there
+are no `_le` cursor functions to mix up mid-stream:
+
+```c
+nbq_reader r;
+nbq_reader_init_le(&r, deflate, bits);
+nbq_read_u32(&r, 1, &bfinal);               /* LSB first, because r is */
+```
+
+The same three fields, 19 in 5 bits, 3000 in 12 and 0x55 in 7, in both
+orders:
+
+```
+MSB first   9D DC 55        LSB first   13 77 AB
+```
+
+Underneath there is one implementation with the order as a parameter, so
+the two cannot drift apart. Byte order follows from bit order at aligned
+positions, which is why the suffixes are `_be` and `_le`: 0x1234 in 16 bits
+at bit 0 is `12 34` MSB first and `34 12` LSB first. Signed fields, zigzag,
+the float forms and the varint rules act on the assembled integer and are
+the same in both orders. A varint's groups land wherever the order puts them,
+so its bytes differ between orders unless a group happens to be
+byte-aligned. The optional container is MSB first; it is nbitq's own format.
 
 ### Varints
 
@@ -315,8 +356,10 @@ compiles, links and runs its tests, one per method.
 
 ## Fixed conventions
 
-- **Bit 0 is the most significant bit of byte 0**, and fields are written
-  most-significant bit first. This does not change.
+- **Bit order is a property of the stream, declared once.** MSB first
+  unless a call or a cursor says `_le`, and LSB first then. Within an order
+  the layout is fixed: bit 0 is the MSB of byte 0 (the LSB, for `_le`) and a
+  value's first bit goes first. This does not change.
 - **Every operation is all-or-nothing.** On failure, nothing is written and no
   cursor moves, so a failed read can be retried.
 - **Bad input is refused, not approximated.** An out-of-range width or
@@ -336,11 +379,11 @@ every `#include` of a hosted header — the library then builds
 
 | target | `.text` |
 |---|---:|
-| **Cortex-M3/M4/M7** (Thumb-2) | **4,793 bytes** |
-| Cortex-M0 (Thumb-1) | 5,025 |
-| ARM (v7-A) | 7,249 |
-| AArch64 | 4,389 |
-| x86-64 | 4,545 |
+| **Cortex-M3/M4/M7** (Thumb-2) | **6,555 bytes** |
+| Cortex-M0 (Thumb-1) | 7,407 |
+| ARM (v7-A) | 11,025 |
+| AArch64 | 5,477 |
+| x86-64 | 5,940 |
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state, so it
 is reentrant per instance. Reproduce with `make targets`.
@@ -443,7 +486,15 @@ that decodes must re-encode to identical bits; the 64-bit, 32-bit and hi/lo
 paths must agree read-for-read; a failed read must leave the cursor
 untouched; a copied bit run must compare equal to its source.
 
-Measured: 76,971 core checks, 2,080 container checks, 172 checks of the C++
+Bit order is tested against a model, not against itself. The suite expands
+a buffer into one character per bit in stream order and reads members from
+that string, so every width, offset and bit pattern is checked in both
+orders against something that is right by inspection. The two orders are
+then tied to each other by a mirror identity, and the LSB-first path to the
+outside world by raw DEFLATE blocks that zlib produced, which nbitq reads
+field by field and writes back byte for byte.
+
+Measured: 228,031 core checks, 2,080 container checks, 288 checks of the C++
 wrapper, and 2,901,892 libFuzzer runs, all under AddressSanitizer and
 UndefinedBehaviorSanitizer, all clean.
 

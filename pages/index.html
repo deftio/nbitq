@@ -70,7 +70,8 @@
         S.section('The library', [
           S.ul([
             ['C99, two files: ', S.c('nbitq.h'), ' and ', S.c('nbitq.c'), '. No dependencies, not even libc for the core; it builds with ', S.c('-ffreestanding'), ' under ', S.c('NBQ_NO_MALLOC'), '.'],
-            ['About 4.7 KB of code at ', S.c('-Oz'), ' on Cortex-M; see the table below.'],
+            ['About 5.9 KB of code at ', S.c('-Oz'), ' on Cortex-M; see the table below.'],
+            ['Either bit order: MSB first by default, LSB first through the ', S.c('_le'), ' names and cursor initialisers, with one implementation underneath.'],
             ['Every call is bounds-checked against the length it is given and is all-or-nothing: a call that fails writes nothing and moves no cursor.'],
             ['Optional, in separate files: a ', S.c('.nbq'), ' container with a type string and CRC-64, and ', S.c('nbitq.hpp'), ', a header-only C++ wrapper.'],
             ['BSD-2-Clause.']
@@ -106,6 +107,7 @@
             { Operation: 'A span of bits moved elsewhere', nbitq: 'nbq_copy_bits from any offset to any offset, overlap-safe' },
             { Operation: 'Compare, fill, count', nbitq: 'nbq_compare_bits, nbq_fill_bits, nbq_popcount_bits' },
             { Operation: 'A float or double', nbitq: 'nbq_get_f32 / nbq_put_f32, nbq_get_f64 / nbq_put_f64: IEEE-754 bit patterns, header-only' },
+            { Operation: 'A stream in the other bit order', nbitq: '_le twins of every indexed function and _le cursor initialisers; MSB first is the default, LSB first is DEFLATE’s' },
             { Operation: 'From C++', nbitq: 'nbitq.hpp: nbq::Reader, nbq::Writer, nbq::OwningWriter; each method one call into the C library' },
             { Operation: '64-bit values on a 32-bit CPU', nbitq: 'nbq_get_parts / nbq_put_parts, 32-bit arithmetic only' },
             { Operation: 'A bit run stored in a file', nbitq: 'the optional .nbq container: length, type string, CRC-64' }
@@ -116,7 +118,7 @@
           bw.makeFeatureGrid({
             columns: 2, centered: false,
             features: [
-              { title: 'Bit 0 is the MSB of byte 0', description: 'Fields are written most-significant bit first. This does not change.' },
+              { title: 'Bit order is a property of the stream', description: 'MSB first unless a call or a cursor says _le, and LSB first then. Within an order the layout is fixed. This does not change.' },
               { title: 'Every operation is all-or-nothing', description: 'On failure nothing is written and no cursor moves, so a failed read can be retried.' },
               { title: 'Bad input is refused, not approximated', description: 'An out-of-range width or position, a varint too wide for 64 bits, or an overlong encoding is an error.' },
               { title: 'Varints are canonical', description: 'One value has exactly one encoding.' }
@@ -127,11 +129,11 @@
         S.section('Code size', [
           S.p(['Freestanding, with ', S.c('NBQ_NO_MALLOC'), ', no libc, ', S.c('-Oz'), '. Reproduce with ', S.c('make targets'), '.']),
           S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
-            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,793' },
-            { target: 'Cortex-M0 (Thumb-1)', text: '5,025' },
-            { target: 'ARM v7-A', text: '7,249' },
-            { target: 'AArch64', text: '4,389' },
-            { target: 'x86-64', text: '4,545' }
+            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '6,555' },
+            { target: 'Cortex-M0 (Thumb-1)', text: '7,407' },
+            { target: 'ARM v7-A', text: '11,025' },
+            { target: 'AArch64', text: '5,477' },
+            { target: 'x86-64', text: '5,940' }
           ]),
           S.p('The tests cover every width from 1 to 64, every varint base from 2 to 64, every start offset within a byte and truncation at every bit position, under AddressSanitizer and UndefinedBehaviorSanitizer, plus a property-checking fuzz harness.')
         ]),

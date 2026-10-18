@@ -76,6 +76,14 @@ static void test_header_inlines()
     nbq_reader_init(&r, buf, w.pos);
     CHECK(nbq_read_f32(&r, &f) == NBQ_OK && f == 1.5f, "read_f32");
     CHECK(nbq_read_f64(&r, &d) == NBQ_OK && d == 0.25, "read_f64");
+
+    // the LSB-first inlines: little-endian bytes at an aligned position
+    uint8_t le[16] = {0};
+    CHECK(nbq_put_f32_le(le, 128, 0, 3.14159f) == NBQ_OK && le[0] == 0xD0 && le[3] == 0x40,
+          "put_f32_le");
+    CHECK(nbq_get_f32_le(le, 128, 0, &f) == NBQ_OK && nbq_f32_bits(f) == 0x40490FD0u, "get_f32_le");
+    CHECK(nbq_put_f64_le(le, 128, 32, -2.5) == NBQ_OK && le[11] == 0xC0, "put_f64_le");
+    CHECK(nbq_get_f64_le(le, 128, 32, &d) == NBQ_OK && d == -2.5, "get_f64_le");
 }
 
 // Writes one of everything with the C writer; the sequence the Reader and
@@ -149,6 +157,21 @@ static void test_reader()
     CHECK(e.init(buf, len) == NBQ_OK && e.length() == len, "init");
     CHECK(e.init(nullptr, len) == NBQ_ERR_PARAM && e.length() == 0 && e.buffer() == nullptr,
           "failed init leaves an empty reader");
+    CHECK(e.order() == NBQ_MSB_FIRST, "MSB first unless asked");
+
+    // LSB first: the order is a property of the reader, set at init
+    uint8_t lsb[8] = {0};
+    nbq_writer cw;
+    nbq_writer_init_le(&cw, lsb, 64);
+    nbq_write_u32(&cw, 12, 3000);
+    nbq_write_u32(&cw, 5, 19);
+    nbq::Reader rl(lsb, cw.pos, NBQ_LSB_FIRST);
+    CHECK(rl.order() == NBQ_LSB_FIRST, "order()");
+    CHECK(rl.u32(12, &u32) == NBQ_OK && u32 == 3000 && rl.u32(5, &u32) == NBQ_OK && u32 == 19,
+          "LSB-first reads");
+    nbq::Reader rm(lsb, cw.pos);
+    CHECK(rm.u32(12, &u32) == NBQ_OK && u32 != 3000, "the same bytes MSB first differ");
+    CHECK(e.init(lsb, cw.pos, NBQ_LSB_FIRST) == NBQ_OK && e.order() == NBQ_LSB_FIRST, "init with order");
 }
 
 static void test_writer()
@@ -193,6 +216,19 @@ static void test_writer()
           "empty writer refuses every write");
     CHECK(e.init(buf, 64) == NBQ_OK && e.capacity() == 64, "init");
     CHECK(e.init(nullptr, 64) == NBQ_ERR_PARAM && e.capacity() == 0, "failed init leaves it empty");
+    CHECK(e.order() == NBQ_MSB_FIRST, "MSB first unless asked");
+
+    // LSB first produces what the C LSB-first writer produces
+    uint8_t lsb_cxx[8] = {0}, lsb_c[8] = {0};
+    nbq::Writer wl(lsb_cxx, 64, NBQ_LSB_FIRST);
+    CHECK(wl.order() == NBQ_LSB_FIRST && wl.u32(12, 3000) == NBQ_OK && wl.u32(5, 19) == NBQ_OK,
+          "LSB-first writes");
+    nbq_writer cwl;
+    nbq_writer_init_le(&cwl, lsb_c, 64);
+    nbq_write_u32(&cwl, 12, 3000);
+    nbq_write_u32(&cwl, 5, 19);
+    CHECK(std::memcmp(lsb_cxx, lsb_c, sizeof(lsb_c)) == 0 && lsb_c[0] == 0xB8, "same bytes as C");
+    CHECK(e.init(buf, 64, NBQ_LSB_FIRST) == NBQ_OK && e.order() == NBQ_LSB_FIRST, "init with order");
 }
 
 #ifndef NBQ_NO_MALLOC
@@ -230,6 +266,16 @@ static void test_owning_writer()
     // an impossible size is refused and leaves nothing to free
     nbq::OwningWriter huge;
     CHECK(huge.init(UINT64_MAX) == NBQ_ERR_ALLOC && huge.buffer() == nullptr, "refused");
+
+    // LSB first, kept across growth
+    nbq::OwningWriter ol(16, NBQ_LSB_FIRST);
+    CHECK(ol.order() == NBQ_LSB_FIRST, "owning order");
+    for (uint32_t i = 0; i < 100; i++)
+        CHECK(ol.u32(12, i) == NBQ_OK, "grow LSB first");
+    CHECK(ol.order() == NBQ_LSB_FIRST && nbq_get_u32_le(ol.buffer(), ol.capacity(), 12 * 57, 12, &v) == NBQ_OK && v == 57,
+          "order survives growth");
+    CHECK(ol.init(0, NBQ_LSB_FIRST) == NBQ_OK && ol.order() == NBQ_LSB_FIRST && ol.capacity() == 512,
+          "re-init with order");
 }
 #endif
 

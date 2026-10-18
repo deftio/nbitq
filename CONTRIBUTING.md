@@ -56,7 +56,11 @@ clean build on macOS is not proof.
 
 The suite is exhaustive rather than representative: every width from 1 to
 64, every varint base from 2 to 64, every start offset within a byte,
-truncation at every bit position. A new function is tested the same way.
+truncation at every bit position, in both bit orders. Bit order is checked
+against a model in `test_nbitq.c` that expands a buffer to one character
+per bit and reads members from the string, plus a mirror identity between
+the orders and raw DEFLATE blocks from zlib. A new function is tested the
+same way, in both orders.
 The fuzz harness (`fuzz_nbitq.c`) checks properties, not just the absence of
 crashes; a property callers rely on belongs in it. `make fuzz` runs it over
 a fixed-seed PRNG anywhere, and `./release.sh libfuzzer` runs it under

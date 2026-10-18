@@ -10,6 +10,35 @@ keep each section self-contained.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+### Added
+- Bit order. Every indexed function has an `_le` twin with the same
+  signature that is LSB first (bit 0 is the LSB of byte 0, a value's bit 0
+  goes first, as DEFLATE and Vorbis do) and a `_be` macro spelling of the
+  plain MSB-first name. `nbq_reader_init_le`, `nbq_writer_init_le` and
+  `nbq_writer_init_alloc_le` set an `order` field on the cursor structs,
+  which every cursor function follows. One implementation underneath with
+  the order as a parameter; the plain names behave exactly as before.
+  `nbq_bit_order` is the enum. The C++ wrapper takes the order on `init`
+  and reports it with `order()`.
+- Tests: a bit-string model of the stream checks every width, offset and
+  pattern in both orders; a mirror identity ties the orders to each other;
+  raw DEFLATE blocks produced by zlib are read field by field and written
+  back byte for byte; the fuzz harness takes the order as an input. The
+  core suite is 228,031 checks.
+- Documentation of the two backward-reading recipes (fixed widths, and
+  varints by their continuation bits) under "Not provided".
+
+### Changed
+- `nbq_reader` and `nbq_writer` gained a trailing `order` field. Code that
+  initialises them through the init functions is unaffected; code that
+  filled the structs by hand must set it. This is the reason for the minor
+  version.
+- Code size: the core is 5,901 bytes at -Oz on x86-64 and 6,555 on
+  Cortex-M4 (was 4,749 and 4,793), from carrying both assembly loops and
+  the `_le` entry points. Correctness over size, by design.
+
 ## [0.1.2] - 2026-10-17
 
 ### Added
@@ -86,7 +115,8 @@ implementation is new.
 - An out-of-range width is an error rather than silently clamped.
 - The indexed and cursor paths share one implementation.
 
-[Unreleased]: https://github.com/deftio/nbitq/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/deftio/nbitq/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/deftio/nbitq/releases/tag/v0.2.0
 [0.1.2]: https://github.com/deftio/nbitq/releases/tag/v0.1.2
 [0.1.1]: https://github.com/deftio/nbitq/releases/tag/v0.1.1
 [0.1.0]: https://github.com/deftio/nbitq/releases/tag/v0.1.0

@@ -3,7 +3,7 @@
 nbitq packs and unpacks n-bit integers in a bit stream: values of any width
 from 1 to 64 bits, written back to back or at any bit position in a byte
 buffer, and read back as native integers. Two C99 files, no dependencies,
-about 4.7 KB compiled.
+about 5.9 KB compiled.
 
 ```c
 uint8_t buf[64] = {0};
@@ -99,14 +99,16 @@ needs next:
 | A span of bits moved elsewhere | `nbq_copy_bits` from any offset to any offset, overlap-safe |
 | Compare, fill, count | `nbq_compare_bits`, `nbq_fill_bits`, `nbq_popcount_bits` |
 | A float or double | `nbq_get_f32` / `nbq_put_f32`, `nbq_get_f64` / `nbq_put_f64`: IEEE-754 bit patterns, header-only |
+| A stream in the other bit order | `_le` twins of every indexed function and `_le` cursor initialisers; MSB first is the default, LSB first is DEFLATE's |
 | From C++ | `nbitq.hpp`: `nbq::Reader`, `nbq::Writer`, `nbq::OwningWriter`; each method one call into the C library |
 | 64-bit values on a 32-bit CPU | `nbq_get_parts` / `nbq_put_parts`, using only 32-bit arithmetic |
 | A bit run stored in a file | the optional `.nbq` container: length, type string, CRC-64 |
 
 ## Fixed conventions
 
-- **Bit 0 is the most significant bit of byte 0**, and fields are written
-  most-significant bit first. This does not change.
+- **Bit order is a property of the stream, declared once.** MSB first
+  unless a call or a cursor says `_le`, and LSB first then. Within an order
+  the layout is fixed. This does not change.
 - **Every operation is all-or-nothing.** On failure nothing is written and no
   cursor moves, so a failed read can be retried.
 - **Bad input is refused, not approximated.** An out-of-range width or

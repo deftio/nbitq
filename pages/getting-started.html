@@ -73,7 +73,7 @@
             'include(FetchContent)',
             'FetchContent_Declare(nbitq',
             '    GIT_REPOSITORY https://github.com/deftio/nbitq.git',
-            '    GIT_TAG        v0.1.2)',
+            '    GIT_TAG        v0.2.0)',
             'FetchContent_MakeAvailable(nbitq)',
             'target_link_libraries(your_target PRIVATE nbitq)'
           ]),
@@ -101,6 +101,22 @@
           ]),
           S.p(['The structs are public and plain: on the stack, in static storage, or as a member of another struct. There is no create/destroy pair. ', S.c('nbq_reader_init'), ' accepts a ', S.c('const'), ' buffer, including one in ROM.'])
         ], 'two-ways'),
+
+        S.section('Bit order', [
+          S.p(['The plain names are MSB first: bit 0 is the MSB of byte 0 and a value\'s top bit goes first, as in H.264 and most network formats. For a stream numbered from the LSB, as DEFLATE and Vorbis are, every indexed function has an ', S.c('_le'), ' twin with the same signature, and cursors take the order from their initialiser:']),
+          S.code([
+            'uint32_t bfinal, btype, len;',
+            'nbq_reader r;',
+            'nbq_reader_init_le(&r, deflate, bit_len);   /* LSB first from here on */',
+            'nbq_read_u32(&r, 1, &bfinal);',
+            'nbq_read_u32(&r, 2, &btype);',
+            'nbq_reader_align(&r, 8);                    /* a stored block pads to a byte */',
+            'nbq_read_u32(&r, 16, &len);                 /* LEN, little-endian as DEFLATE writes it */',
+            '',
+            'nbq_get_u32_le(deflate, bit_len, 8, 16, &len);   /* the same field, indexed */'
+          ]),
+          S.p(['The ', S.c('_be'), ' names are spellings of the plain ones, for code that reads two streams side by side. The order is a property of the stream: declare it once and the layout within it is fixed.'])
+        ], 'bit-order'),
 
         S.section('Result codes', [
           S.p(['Every function returns an ', S.c('nbq_result'), '. Zero is success; the rest are negative:']),
@@ -173,11 +189,11 @@
             '      -DNBQ_NO_MALLOC -c nbitq.c'
           ]),
           S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
-            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '4,793' },
-            { target: 'Cortex-M0 (Thumb-1)', text: '5,025' },
-            { target: 'ARM v7-A', text: '7,249' },
-            { target: 'AArch64', text: '4,389' },
-            { target: 'x86-64', text: '4,545' }
+            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '6,555' },
+            { target: 'Cortex-M0 (Thumb-1)', text: '7,407' },
+            { target: 'ARM v7-A', text: '11,025' },
+            { target: 'AArch64', text: '5,477' },
+            { target: 'x86-64', text: '5,940' }
           ]),
           S.p(['No stdio, no floating-point arithmetic, no libm, no recursion, no global state; each reader or writer is independent. On a 32-bit CPU without native 64-bit arithmetic, the ', S.c('u32'), ' functions cover fields up to 32 bits and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' cover wider ones. They produce the same bits as the ', S.c('u64'), ' functions; only the arithmetic differs.'])
         ], 'embedded'),

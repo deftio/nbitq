@@ -36,8 +36,14 @@ Those projects depend on the fixed conventions below. Do not change them.
 
 ## Fixed conventions
 
-- **Bit 0 is the most significant bit of byte 0.** Fields are written
-  MSB first. This matches network order and most codec bit readers.
+- **Bit order is a property of the stream, declared once.** MSB first
+  unless a call or a cursor says `_le`, and LSB first then. MSB first: bit 0
+  is the MSB of byte 0 and a value's top bit goes first (H.264, MPEG, network
+  formats). LSB first: bit 0 is the LSB of byte 0 and a value's bit 0 goes
+  first (DEFLATE, Vorbis). Every indexed function has an `_le` twin and a
+  `_be` alias; cursors take the order from `nbq_reader_init_le` /
+  `nbq_writer_init_le`. One implementation underneath, with the order as a
+  parameter. The container is MSB first.
 - Signed fields are two's complement in `n` bits, sign-extended on read.
 - Varints use `base` bits per group (2 to 64): `base - 1` payload bits
   plus one continuation bit, least-significant group first. **Base 8 is
@@ -84,7 +90,7 @@ Optional pieces:
   when vendored. `FetchContent` with `GIT_TAG vX.Y.Z` also works.
 - Freestanding: define `NBQ_NO_MALLOC`. The growing writer disappears
   and the core includes no hosted header. It builds with
-  `-ffreestanding -nostdinc`. Core is about 4.8 KB of `.text` at `-Oz`
+  `-ffreestanding -nostdinc`. Core is about 5.9 KB of `.text` at `-Oz`
   on Cortex-M.
 - 32-bit targets: use the `u32` functions and `nbq_get_parts` /
   `nbq_put_parts` (a `{hi, lo}` pair) to avoid 64-bit shifts.
@@ -157,7 +163,9 @@ Expectations for a change:
   there are two. That marker is not a way to skip a test that could be
   written.
 - A new cursor function in `nbitq.h` gets a one-line forwarder in
-  `nbitq.hpp` and a call in `test_nbitq_cxx.cpp`.
+  `nbitq.hpp` and a call in `test_nbitq_cxx.cpp`. A new indexed function
+  takes the order as a parameter internally and gets a plain, an `_le` and a
+  `_be` name; the oracle test in `test_nbitq.c` runs it in both orders.
 - Any number quoted in docs (bytes, sizes, check counts) was produced by
   running a command, not estimated. Re-run and update it if it changes.
 - `docs/` and `pages/` say the same thing in the same plain register.

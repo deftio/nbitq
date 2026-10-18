@@ -4,26 +4,43 @@ This page explains what nbitq does with the bits, from first principles and
 down to the byte. Every byte value shown was produced by running the
 library.
 
-## 1. Bit numbering: MSB first
+## 1. Bit order
 
-Within a byte, nbitq numbers bits from the most significant (leftmost) to
-the least significant (rightmost). Bit 0 of the buffer is the most
-significant bit of byte 0; bit 8 is the most significant bit of byte 1; and
-so on.
+A bit stream is numbered from one end of each byte or the other. nbitq does
+both. The plain names are MSB first; the `_le` names and the `_le` cursor
+initialisers are LSB first.
 
 ```
 byte 0 = 0xA5 = 1 0 1 0 0 1 0 1
-bit index        0 1 2 3 4 5 6 7
-                 ^             ^
-                 bit 0 (128)   bit 7 (1)
+MSB first        0 1 2 3 4 5 6 7      bit 0 is the MSB, weight 128
+LSB first        7 6 5 4 3 2 1 0      bit 0 is the LSB, weight 1
 ```
 
-A field is written most-significant bit first, so the first bit of a value
-lands at the lowest bit index. This matches network byte order and most
-codec bit readers; DEFLATE, which packs LSB-first, is the well-known
-exception. It is the one convention that, left ambiguous, makes two
-implementations disagree about every file, so it is fixed and will not
-change.
+In each order a value's first bit goes to the lowest bit index: MSB first
+that is the value's top bit, LSB first its bit 0. So 8 in four bits at bit 0
+is `80` MSB first and `08` LSB first. The three fields from the README, 19
+in 5 bits, 3000 in 12 and 0x55 in 7:
+
+```
+MSB first   9D DC 55     1 0 0 1 1 1 0 1   1 1 0 1 1 1 0 0   0 1 0 1 0 1 0 1
+LSB first   13 77 AB     0 0 0 1 0 0 1 1   0 1 1 1 0 1 1 1   1 0 1 0 1 0 1 1
+```
+
+Read in its own order, either gives 19, 3000, 0x55. Read `13 77 AB` MSB
+first gives 2, 1775, 0x2B: the bits are the same, the numbering is not.
+
+MSB first is network order and what most codec bit readers use, H.264 and
+MPEG among them. LSB first is DEFLATE, Vorbis and most PC-heritage packers.
+Byte order follows from bit order at aligned positions, which is why the
+suffixes are `_be` and `_le`: 0x1234 in 16 bits at bit 0 is `12 34` MSB
+first and `34 12` LSB first.
+
+Underneath there is one implementation with the order as a parameter, and
+one place a bit is addressed. The order is a property of a stream, declared
+once. Within an order the layout is fixed; it is the one convention that,
+left ambiguous, makes two implementations disagree about every file.
+
+The sections below show MSB first. LSB first mirrors each example.
 
 ## 2. Packing fields
 
@@ -287,12 +304,19 @@ nbitq is not optimised. Multi-bit operations loop over single bits rather
 than loading words and masking, which costs roughly 3 to 5× on reads
 against a word-at-a-time implementation.
 
-There is one place in the code where a bit is addressed:
+There is one place in the code where a bit is addressed, and the bit order
+is one select in it:
 
 ```c
-static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos)
+static inline unsigned int bit_shift(uint64_t pos, nbq_bit_order order)
 {
-    return (buf[pos >> 3] >> (7u - (pos & 7u))) & 1u;
+    const unsigned int in_byte = (unsigned int)(pos & 7u);
+    return (order == NBQ_LSB_FIRST) ? in_byte : 7u - in_byte;
+}
+
+static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos, nbq_bit_order order)
+{
+    return (buf[pos >> 3] >> bit_shift(pos, order)) & 1u;
 }
 ```
 

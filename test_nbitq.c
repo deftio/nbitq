@@ -779,6 +779,604 @@ static void test_allocating_writer_limits(void)
 #endif
 
 
+/* ════════════════════════════════════════════════════════════════════════
+ * Bit order
+ * ════════════════════════════════════════════════════════════════════════
+ *
+ * The oracle: a buffer expanded to one character per bit, in stream order.
+ * MSB first, each byte contributes its bits from the top down; LSB first,
+ * from the bottom up. A member is then a substring, and its value is read
+ * from that substring in the order's direction: MSB first the first
+ * character is the top bit, LSB first it is bit 0. There are no shifts over
+ * a buffer and no masks, so it is right by inspection, and the library is
+ * compared against it in both orders at every width and offset. The orders
+ * are then tied to each other by a mirror identity, and the LSB-first path
+ * to the outside world by DEFLATE blocks that zlib produced.
+ */
+
+#define ORACLE_BYTES 32
+typedef char oracle[ORACLE_BYTES * 8 + 1];
+
+static void oracle_expand(const uint8_t *buf, nbq_bit_order order, oracle s)
+{
+    for (size_t i = 0; i < ORACLE_BYTES; i++)
+        for (unsigned b = 0; b < 8; b++) {
+            const unsigned sh = (order == NBQ_LSB_FIRST) ? b : 7u - b;
+            s[i * 8 + b] = ((buf[i] >> sh) & 1u) ? '1' : '0';
+        }
+    s[ORACLE_BYTES * 8] = '\0';
+}
+
+static void oracle_pack(const oracle s, nbq_bit_order order, uint8_t *buf)
+{
+    for (size_t i = 0; i < ORACLE_BYTES; i++) {
+        unsigned v = 0;
+        for (unsigned b = 0; b < 8; b++) {
+            const unsigned sh = (order == NBQ_LSB_FIRST) ? b : 7u - b;
+            if (s[i * 8 + b] == '1')
+                v |= 1u << sh;
+        }
+        buf[i] = (uint8_t)v;
+    }
+}
+
+static uint64_t oracle_value(const oracle s, uint64_t pos, unsigned n, nbq_bit_order order)
+{
+    uint64_t v = 0;
+    for (unsigned i = 0; i < n; i++) {
+        const uint64_t bit = (s[pos + i] == '1') ? 1u : 0u;
+        if (order == NBQ_LSB_FIRST)
+            v |= bit << i; /* the first character is bit 0 */
+        else
+            v = (v << 1) | bit; /* the first character is the top bit */
+    }
+    return v;
+}
+
+static void oracle_write(oracle s, uint64_t pos, unsigned n, uint64_t v, nbq_bit_order order)
+{
+    for (unsigned i = 0; i < n; i++) {
+        const unsigned src = (order == NBQ_LSB_FIRST) ? i : n - 1u - i;
+        s[pos + i] = ((v >> src) & 1u) ? '1' : '0';
+    }
+}
+
+/* The public names for an order, so one loop can run both. The MSB-first
+   side goes through the _be spellings, which proves those aliases exist. */
+#define BY_ORDER(o, fn, ...) ((o) == NBQ_LSB_FIRST ? fn##_le(__VA_ARGS__) : fn##_be(__VA_ARGS__))
+
+static const nbq_bit_order ORDERS[] = {NBQ_MSB_FIRST, NBQ_LSB_FIRST};
+static const char *const ORDER_NAME[] = {"msb", "lsb"};
+
+static uint64_t bitrev_n(uint64_t v, unsigned n)
+{
+    uint64_t r = 0;
+    for (unsigned i = 0; i < n; i++)
+        r |= ((v >> i) & 1u) << (n - 1u - i);
+    return r;
+}
+
+static uint8_t bitrev8(uint8_t b)
+{
+    return (uint8_t)bitrev_n(b, 8);
+}
+
+static uint64_t sign_extend(uint64_t raw, unsigned n)
+{
+    if (n < 64u && ((raw >> (n - 1u)) & 1u))
+        raw |= ~((((uint64_t)1) << n) - 1u);
+    return raw;
+}
+
+static void test_both_orders_against_the_oracle(void)
+{
+    static const uint64_t V[] = {0ull, 1ull, 2ull, 0x5555555555555555ull,
+                                 0xAAAAAAAAAAAAAAAAull, 0x7FFFFFFFFFFFFFFFull,
+                                 0x8000000000000000ull, UINT64_MAX, 0xDEADBEEFCAFEBABEull};
+    uint8_t buf[ORACLE_BYTES], poison[ORACLE_BYTES];
+    const uint64_t cap = ORACLE_BYTES * 8;
+    oracle s, p;
+
+    /* a poison that is not symmetric under bit reversal, so a field written
+       in the wrong order cannot look right by accident */
+    for (size_t i = 0; i < sizeof(poison); i++)
+        poison[i] = (uint8_t)(0x1Bu + 37u * i);
+
+    for (size_t oi = 0; oi < 2; oi++) {
+        const nbq_bit_order order = ORDERS[oi];
+        const char *name = ORDER_NAME[oi];
+        for (unsigned n = 1; n <= 64; n++) {
+            const uint64_t mask = (n == 64) ? UINT64_MAX : ((1ull << n) - 1ull);
+            for (size_t vi = 0; vi < sizeof(V) / sizeof(V[0]); vi++) {
+                const uint64_t want = V[vi] & mask;
+                for (unsigned off = 0; off < 8; off++) {
+                    uint64_t got = 0;
+                    int64_t sgot = 0;
+                    nbq_u64_parts parts = {0, 0};
+
+                    /* put: the library writes, the oracle reads; and nothing
+                       outside the field moved */
+                    memcpy(buf, poison, sizeof(buf));
+                    CHECK(BY_ORDER(order, nbq_put_u64, buf, cap, off, n, want) == NBQ_OK,
+                          "%s put_u64 n=%u off=%u", name, n, off);
+                    oracle_expand(buf, order, s);
+                    CHECK(oracle_value(s, off, n, order) == want,
+                          "%s put_u64 n=%u off=%u: oracle reads %llx want %llx", name, n, off,
+                          (unsigned long long)oracle_value(s, off, n, order),
+                          (unsigned long long)want);
+                    oracle_expand(poison, order, p);
+                    oracle_write(p, off, n, want, order);
+                    CHECK(memcmp(s, p, sizeof(s)) == 0, "%s put_u64 n=%u off=%u touched other bits",
+                          name, n, off);
+
+                    /* get: the oracle writes, the library reads, by every path */
+                    oracle_expand(poison, order, s);
+                    oracle_write(s, off, n, want, order);
+                    oracle_pack(s, order, buf);
+                    CHECK(BY_ORDER(order, nbq_get_u64, buf, cap, off, n, &got) == NBQ_OK &&
+                              got == want,
+                          "%s get_u64 n=%u off=%u: %llx want %llx", name, n, off,
+                          (unsigned long long)got, (unsigned long long)want);
+                    CHECK(BY_ORDER(order, nbq_get_parts, buf, cap, off, n, &parts) == NBQ_OK &&
+                              parts.hi == (uint32_t)(want >> 32) && parts.lo == (uint32_t)want,
+                          "%s get_parts n=%u off=%u", name, n, off);
+                    CHECK(BY_ORDER(order, nbq_get_s64, buf, cap, off, n, &sgot) == NBQ_OK &&
+                              (uint64_t)sgot == sign_extend(want, n),
+                          "%s get_s64 n=%u off=%u", name, n, off);
+
+                    /* the other writers produce the same bits as put_u64 */
+                    memcpy(buf, poison, sizeof(buf));
+                    CHECK(BY_ORDER(order, nbq_put_parts, buf, cap, off, n, parts) == NBQ_OK,
+                          "%s put_parts", name);
+                    oracle_expand(buf, order, p);
+                    CHECK(memcmp(s, p, sizeof(s)) == 0, "%s put_parts n=%u off=%u differs", name, n,
+                          off);
+                    memcpy(buf, poison, sizeof(buf));
+                    CHECK(BY_ORDER(order, nbq_put_s64, buf, cap, off, n, (int64_t)want) == NBQ_OK,
+                          "%s put_s64", name);
+                    oracle_expand(buf, order, p);
+                    CHECK(memcmp(s, p, sizeof(s)) == 0, "%s put_s64 n=%u off=%u differs", name, n,
+                          off);
+
+                    if (n <= 32) {
+                        uint32_t g32 = 0;
+                        int32_t s32 = 0;
+                        oracle_pack(s, order, buf);
+                        CHECK(BY_ORDER(order, nbq_get_u32, buf, cap, off, n, &g32) == NBQ_OK &&
+                                  g32 == (uint32_t)want,
+                              "%s get_u32 n=%u off=%u", name, n, off);
+                        CHECK(BY_ORDER(order, nbq_get_s32, buf, cap, off, n, &s32) == NBQ_OK &&
+                                  (uint32_t)s32 == (uint32_t)sign_extend(want, n),
+                              "%s get_s32 n=%u off=%u", name, n, off);
+                        memcpy(buf, poison, sizeof(buf));
+                        CHECK(BY_ORDER(order, nbq_put_u32, buf, cap, off, n, (uint32_t)want) ==
+                                  NBQ_OK,
+                              "%s put_u32", name);
+                        oracle_expand(buf, order, p);
+                        CHECK(memcmp(s, p, sizeof(s)) == 0, "%s put_u32 n=%u off=%u differs", name,
+                              n, off);
+                        memcpy(buf, poison, sizeof(buf));
+                        CHECK(BY_ORDER(order, nbq_put_s32, buf, cap, off, n, (int32_t)want) ==
+                                  NBQ_OK,
+                              "%s put_s32", name);
+                        oracle_expand(buf, order, p);
+                        CHECK(memcmp(s, p, sizeof(s)) == 0, "%s put_s32 n=%u off=%u differs", name,
+                              n, off);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* The two orders are mirror images: reading byte-reversed data LSB first
+   gives the bit-reversal of the MSB-first read, at every width and offset,
+   and writing likewise. This ties the orders to each other independently of
+   the oracle. */
+static void test_orders_are_mirror_images(void)
+{
+    uint8_t a[ORACLE_BYTES], ra[ORACLE_BYTES], b[ORACLE_BYTES], rb[ORACLE_BYTES];
+    const uint64_t cap = ORACLE_BYTES * 8;
+    uint64_t seed = 0x9E3779B97F4A7C15ull;
+
+    for (size_t i = 0; i < sizeof(a); i++) {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        a[i] = (uint8_t)(seed >> 56);
+        ra[i] = bitrev8(a[i]);
+    }
+
+    for (unsigned n = 1; n <= 64; n++) {
+        for (unsigned off = 0; off < 16; off++) {
+            uint64_t le = 0, be = 0;
+            CHECK(nbq_get_u64_le(a, cap, off, n, &le) == NBQ_OK, "le read");
+            CHECK(nbq_get_u64_be(ra, cap, off, n, &be) == NBQ_OK, "be read of reversed");
+            CHECK(le == bitrev_n(be, n), "mirror read n=%u off=%u: le %llx be %llx", n, off,
+                  (unsigned long long)le, (unsigned long long)be);
+
+            memcpy(b, a, sizeof(b));
+            memcpy(rb, ra, sizeof(rb));
+            CHECK(nbq_put_u64_le(b, cap, off, n, le ^ 0x5A5A5A5A5A5A5A5Aull) == NBQ_OK, "le put");
+            CHECK(nbq_put_u64_be(rb, cap, off, n, bitrev_n(le ^ 0x5A5A5A5A5A5A5A5Aull, n)) ==
+                      NBQ_OK,
+                  "be put");
+            int same = 1;
+            for (size_t i = 0; i < sizeof(b); i++)
+                same = same && bitrev8(b[i]) == rb[i];
+            CHECK(same, "mirror write n=%u off=%u", n, off);
+        }
+    }
+}
+
+/* Raw DEFLATE as zlib emits it: an LSB-first stream, with a quirk that is
+   the best possible test of bit order. Huffman codes are packed starting
+   from their most significant bit, so inside an LSB-first stream each code
+   appears bit-reversed. A reader with the wrong order gets every field
+   wrong; one with the right order gets the literal 'h' as 0x19, which is
+   its 8-bit fixed code 0x98 reversed.
+
+   Bytes from Python: zlib.compressobj(level, zlib.DEFLATED, -15) over
+   b"hello", level 0 for the stored block and 9 for the fixed one. */
+static void test_deflate_blocks_from_zlib(void)
+{
+    static const uint8_t stored[] = {0x01, 0x05, 0x00, 0xFA, 0xFF, 'h', 'e', 'l', 'l', 'o'};
+    static const uint8_t fixed[] = {0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00};
+    static const uint32_t codes[] = {0x19, 0xA9, 0x39, 0x39, 0xF9}; /* h e l l o, reversed */
+    uint8_t out[16];
+    nbq_reader r;
+    nbq_writer w;
+    uint32_t v = 99;
+
+    /* stored block: BFINAL=1, BTYPE=00, pad to a byte, LEN, NLEN, bytes */
+    CHECK(nbq_reader_init_le(&r, stored, sizeof(stored) * 8) == NBQ_OK, "init_le");
+    CHECK(r.order == NBQ_LSB_FIRST, "reader order");
+    CHECK(nbq_read_u32(&r, 1, &v) == NBQ_OK && v == 1, "BFINAL");
+    CHECK(nbq_read_u32(&r, 2, &v) == NBQ_OK && v == 0, "BTYPE stored");
+    CHECK(nbq_reader_align(&r, 8) == NBQ_OK && r.pos == 8, "pad to byte");
+    CHECK(nbq_read_u32(&r, 16, &v) == NBQ_OK && v == 5, "LEN = 5 (little-endian bytes)");
+    CHECK(nbq_read_u32(&r, 16, &v) == NBQ_OK && v == 0xFFFA, "NLEN = ~5");
+    for (int i = 0; i < 5; i++)
+        CHECK(nbq_read_u32(&r, 8, &v) == NBQ_OK && v == (uint32_t)"hello"[i], "byte %d", i);
+    CHECK(nbq_reader_remaining(&r) == 0, "consumed exactly");
+
+    /* the indexed _le forms read the same fields */
+    CHECK(nbq_get_u32_le(stored, 80, 8, 16, &v) == NBQ_OK && v == 5, "indexed LEN");
+    CHECK(nbq_get_u32_le(stored, 80, 24, 16, &v) == NBQ_OK && v == 0xFFFA, "indexed NLEN");
+
+    /* the same bytes MSB first are different numbers, as they must be */
+    CHECK(nbq_get_u32(stored, 80, 0, 1, &v) == NBQ_OK && v == 0, "MSB-first sees BFINAL as 0");
+
+    /* and the LSB-first writer reproduces zlib's bytes exactly */
+    memset(out, 0, sizeof(out));
+    CHECK(nbq_writer_init_le(&w, out, sizeof(out) * 8) == NBQ_OK, "writer_init_le");
+    CHECK(w.order == NBQ_LSB_FIRST, "writer order");
+    CHECK(nbq_write_u32(&w, 1, 1) == NBQ_OK && nbq_write_u32(&w, 2, 0) == NBQ_OK, "header");
+    CHECK(nbq_writer_align(&w, 8) == NBQ_OK && w.pos == 8, "pad");
+    CHECK(nbq_write_u32(&w, 16, 5) == NBQ_OK && nbq_write_u32(&w, 16, 0xFFFA) == NBQ_OK, "lengths");
+    for (int i = 0; i < 5; i++)
+        CHECK(nbq_write_u32(&w, 8, (uint32_t)"hello"[i]) == NBQ_OK, "byte %d", i);
+    CHECK(w.pos == 80 && memcmp(out, stored, sizeof(stored)) == 0,
+          "stored block reproduced byte for byte");
+
+    /* fixed-Huffman block: BFINAL=1, BTYPE=01, then bit-reversed codes */
+    CHECK(nbq_reader_init_le(&r, fixed, sizeof(fixed) * 8) == NBQ_OK, "init_le fixed");
+    CHECK(nbq_read_u32(&r, 1, &v) == NBQ_OK && v == 1, "BFINAL");
+    CHECK(nbq_read_u32(&r, 2, &v) == NBQ_OK && v == 1, "BTYPE fixed");
+    for (int i = 0; i < 5; i++)
+        CHECK(nbq_read_u32(&r, 8, &v) == NBQ_OK && v == codes[i], "code %d: %x want %x", i, v,
+              codes[i]);
+    CHECK(nbq_read_u32(&r, 7, &v) == NBQ_OK && v == 0, "end-of-block code 0000000");
+    CHECK(nbq_reader_remaining(&r) == 6, "six bits of padding left");
+    CHECK(nbq_reader_align(&r, 8) == NBQ_OK && nbq_reader_remaining(&r) == 0, "padding is zero");
+
+    memset(out, 0, sizeof(out));
+    CHECK(nbq_writer_init_le(&w, out, sizeof(out) * 8) == NBQ_OK, "writer_init_le");
+    CHECK(nbq_write_u32(&w, 1, 1) == NBQ_OK && nbq_write_u32(&w, 2, 1) == NBQ_OK, "header");
+    for (int i = 0; i < 5; i++)
+        CHECK(nbq_write_u32(&w, 8, codes[i]) == NBQ_OK, "code %d", i);
+    CHECK(nbq_write_u32(&w, 7, 0) == NBQ_OK && nbq_writer_align(&w, 8) == NBQ_OK, "EOB and pad");
+    CHECK(w.pos == 56 && memcmp(out, fixed, sizeof(fixed)) == 0,
+          "fixed block reproduced byte for byte");
+}
+
+static void test_le_varints(void)
+{
+    static const uint64_t V[] = {0ull, 1ull, 7ull, 8ull, 127ull, 128ull, 300ull, 16383ull,
+                                 16384ull, 0xDEADBEEFull, 0x7FFFFFFFFFFFFFFFull, UINT64_MAX};
+    uint8_t buf[ORACLE_BYTES];
+    const uint64_t cap = ORACLE_BYTES * 8;
+    oracle s;
+
+    for (unsigned base = 2; base <= 64; base++) {
+        const unsigned payload = base - 1;
+        for (size_t vi = 0; vi < sizeof(V) / sizeof(V[0]); vi++) {
+            const uint64_t want = V[vi];
+            const unsigned bits = nbq_varint_bits(want, base);
+            if (bits > 200)
+                continue;
+            for (unsigned off = 0; off < 8; off++) {
+                uint64_t got = 0, next = 0, acc = 0;
+                unsigned shift = 0, g = 0;
+                int done = 0;
+
+                memset(buf, 0, sizeof(buf));
+                CHECK(nbq_put_varint_le(buf, cap, off, base, want, &next) == NBQ_OK &&
+                          next == off + bits,
+                      "put_varint_le base=%u v=%llu off=%u", base, (unsigned long long)want, off);
+                CHECK(nbq_get_varint_le(buf, cap, off, base, &got, &next) == NBQ_OK &&
+                          got == want && next == off + bits,
+                      "get_varint_le base=%u v=%llu off=%u: got %llu", base,
+                      (unsigned long long)want, off, (unsigned long long)got);
+
+                /* the oracle decodes the groups by the stated rule */
+                oracle_expand(buf, NBQ_LSB_FIRST, s);
+                for (g = 0; !done && g < 64; g++) {
+                    const uint64_t group = oracle_value(s, off + g * base, base, NBQ_LSB_FIRST);
+                    const uint64_t chunk = (payload >= 64) ? group : (group & ((1ull << payload) - 1));
+                    if (shift < 64)
+                        acc |= chunk << shift;
+                    shift += payload;
+                    done = ((group >> payload) & 1u) == 0;
+                }
+                CHECK(acc == want && g * base == bits, "oracle decode base=%u v=%llu off=%u", base,
+                      (unsigned long long)want, off);
+
+                /* through an LSB-first cursor, the same */
+                {
+                    nbq_reader r;
+                    got = 0;
+                    CHECK(nbq_reader_init_le(&r, buf, cap) == NBQ_OK &&
+                              nbq_reader_seek(&r, off) == NBQ_OK &&
+                              nbq_read_varint(&r, base, &got) == NBQ_OK && got == want &&
+                              r.pos == off + bits,
+                          "read_varint LSB first base=%u", base);
+                }
+            }
+        }
+
+        /* signed: zigzag round trip */
+        {
+            static const int64_t SV[] = {0, -1, 1, -2, 2, -64, 63, -65536, 65535, INT64_MIN,
+                                         INT64_MAX};
+            for (size_t vi = 0; vi < sizeof(SV) / sizeof(SV[0]); vi++) {
+                int64_t sgot = 0;
+                uint64_t next = 0;
+                memset(buf, 0, sizeof(buf));
+                CHECK(nbq_put_varint_s_le(buf, cap, 3, base, SV[vi], &next) == NBQ_OK &&
+                          nbq_get_varint_s_le(buf, cap, 3, base, &sgot, &next) == NBQ_OK &&
+                          sgot == SV[vi],
+                      "varint_s_le base=%u v=%lld", base, (long long)SV[vi]);
+            }
+        }
+    }
+
+    /* malformed and overflowing input is refused in this order too */
+    {
+        uint64_t got = 0, next = 0;
+        memset(buf, 0, sizeof(buf));
+        CHECK(nbq_put_u64_le(buf, cap, 0, 8, 0x80) == NBQ_OK &&
+                  nbq_put_u64_le(buf, cap, 8, 8, 0x00) == NBQ_OK,
+              "write an overlong zero by hand");
+        CHECK(nbq_get_varint_le(buf, cap, 0, 8, &got, &next) == NBQ_ERR_MALFORMED,
+              "overlong is refused");
+        for (unsigned i = 0; i < 10; i++)
+            CHECK(nbq_put_u64_le(buf, cap, i * 8, 8, 0xFF) == NBQ_OK, "ten continued groups");
+        CHECK(nbq_get_varint_le(buf, cap, 0, 8, &got, &next) == NBQ_ERR_OVERFLOW,
+              "a value past 64 bits is refused");
+        CHECK(nbq_get_varint_le(buf, cap, cap - 4, 8, &got, &next) == NBQ_ERR_RANGE,
+              "a group past the end is refused");
+    }
+
+    /* the two orders agree only by coincidence of alignment: base 8 at a
+       byte boundary gives the same bytes, one bit over it does not */
+    {
+        uint8_t m[ORACLE_BYTES], l[ORACLE_BYTES];
+        uint64_t next;
+        memset(m, 0, sizeof(m));
+        memset(l, 0, sizeof(l));
+        CHECK(nbq_put_varint(m, cap, 0, 8, 300, &next) == NBQ_OK &&
+                  nbq_put_varint_le(l, cap, 0, 8, 300, &next) == NBQ_OK,
+              "both orders at a byte boundary");
+        CHECK(memcmp(m, l, 2) == 0 && m[0] == 0xAC && m[1] == 0x02,
+              "aligned base-8 groups are whole bytes in both orders");
+        memset(m, 0, sizeof(m));
+        memset(l, 0, sizeof(l));
+        CHECK(nbq_put_varint(m, cap, 1, 8, 300, &next) == NBQ_OK &&
+                  nbq_put_varint_le(l, cap, 1, 8, 300, &next) == NBQ_OK,
+              "both orders one bit in");
+        CHECK(memcmp(m, l, 3) != 0, "unaligned, the orders differ");
+    }
+}
+
+static void test_le_runs(void)
+{
+    uint8_t a[ORACLE_BYTES], b[ORACLE_BYTES], c[ORACLE_BYTES];
+    const uint64_t cap = ORACLE_BYTES * 8;
+    oracle sa, sb, sc, want;
+    uint64_t seed = 0x2545F4914F6CDD1Dull, pop = 0, count = 0;
+    int cmp = 1;
+
+    for (size_t i = 0; i < sizeof(a); i++) {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        a[i] = (uint8_t)(seed >> 56);
+        b[i] = (uint8_t)(seed >> 40);
+    }
+    oracle_expand(a, NBQ_LSB_FIRST, sa);
+    oracle_expand(b, NBQ_LSB_FIRST, sb);
+
+    /* copy between buffers: the substring moves, nothing else does */
+    memcpy(c, b, sizeof(c));
+    CHECK(nbq_copy_bits_le(a, cap, 3, c, cap, 11, 157) == NBQ_OK, "copy_bits_le");
+    oracle_expand(c, NBQ_LSB_FIRST, sc);
+    memcpy(want, sb, sizeof(want));
+    memcpy(want + 11, sa + 3, 157);
+    CHECK(memcmp(sc, want, sizeof(sc)) == 0, "copy_bits_le moved exactly the substring");
+
+    /* same buffer, overlapping, both directions, against memmove on the string */
+    memcpy(c, a, sizeof(c));
+    CHECK(nbq_copy_bits_le(c, cap, 5, c, cap, 9, 100) == NBQ_OK, "overlap forward");
+    oracle_expand(c, NBQ_LSB_FIRST, sc);
+    memcpy(want, sa, sizeof(want));
+    memmove(want + 9, want + 5, 100);
+    CHECK(memcmp(sc, want, sizeof(sc)) == 0, "overlap forward matches memmove");
+    memcpy(c, a, sizeof(c));
+    CHECK(nbq_copy_bits_le(c, cap, 9, c, cap, 5, 100) == NBQ_OK, "overlap backward");
+    oracle_expand(c, NBQ_LSB_FIRST, sc);
+    memcpy(want, sa, sizeof(want));
+    memmove(want + 5, want + 9, 100);
+    CHECK(memcmp(sc, want, sizeof(sc)) == 0, "overlap backward matches memmove");
+
+    /* fill */
+    memcpy(c, a, sizeof(c));
+    CHECK(nbq_fill_bits_le(c, cap, 13, 37, 1) == NBQ_OK, "fill_bits_le");
+    oracle_expand(c, NBQ_LSB_FIRST, sc);
+    memcpy(want, sa, sizeof(want));
+    memset(want + 13, '1', 37);
+    CHECK(memcmp(sc, want, sizeof(sc)) == 0, "fill_bits_le set exactly the substring");
+
+    /* compare and popcount agree with the strings */
+    CHECK(nbq_compare_bits_le(a, cap, 3, a, cap, 3, 100, &cmp) == NBQ_OK && cmp == 0,
+          "compare_bits_le equal");
+    {
+        /* a and the filled copy differ somewhere in [13, 50); the first
+           differing character in stream order decides, as strcmp would */
+        int want_sign = 0;
+        for (unsigned i = 13; i < 50 && want_sign == 0; i++)
+            if (sa[i] != sc[i])
+                want_sign = (sa[i] > sc[i]) ? 1 : -1;
+        CHECK(nbq_compare_bits_le(a, cap, 13, c, cap, 13, 37, &cmp) == NBQ_OK &&
+                  ((cmp > 0) - (cmp < 0)) == want_sign,
+              "compare_bits_le decided by the first differing stream bit");
+    }
+    CHECK(nbq_popcount_bits_le(a, cap, 7, 200, &pop) == NBQ_OK, "popcount_bits_le");
+    for (unsigned i = 0; i < 200; i++)
+        count += (sa[7 + i] == '1');
+    CHECK(pop == count, "popcount_bits_le counts the ones: %llu want %llu",
+          (unsigned long long)pop, (unsigned long long)count);
+
+    /* the _be spellings of the runs exist */
+    CHECK(nbq_copy_bits_be(a, cap, 0, c, cap, 0, 8) == NBQ_OK && nbq_fill_bits_be(c, cap, 0, 8, 0) == NBQ_OK &&
+              nbq_compare_bits_be(a, cap, 8, a, cap, 8, 8, &cmp) == NBQ_OK && cmp == 0 &&
+              nbq_popcount_bits_be(a, cap, 0, 8, &pop) == NBQ_OK,
+          "_be aliases for runs");
+}
+
+static void test_le_cursor_and_floats(void)
+{
+    uint8_t buf[64], via_c[64], src[2] = {0xA5, 0x3C}, dst[2] = {0, 0};
+    const uint64_t cap = sizeof(buf) * 8;
+    nbq_writer w;
+    nbq_reader r;
+    nbq_u64_parts p = {0x1u, 0x80000000u}, q = {0, 0};
+    uint64_t u64 = 0;
+    int64_t s64 = 0;
+    uint32_t u32 = 0;
+    int32_t s32 = 0;
+    float f = 0.0f;
+    double d = 0.0;
+    int cmp = 1;
+
+    /* one of everything through an LSB-first writer */
+    memset(buf, 0, sizeof(buf));
+    CHECK(nbq_writer_init_le(&w, buf, cap) == NBQ_OK && w.order == NBQ_LSB_FIRST, "init_le");
+    CHECK(nbq_write_u64(&w, 40, 0x123456789Aull) == NBQ_OK, "u64");
+    CHECK(nbq_write_s64(&w, 20, -7) == NBQ_OK, "s64");
+    CHECK(nbq_write_u32(&w, 12, 3000) == NBQ_OK, "u32");
+    CHECK(nbq_write_s32(&w, 5, -3) == NBQ_OK, "s32");
+    CHECK(nbq_write_parts(&w, 33, p) == NBQ_OK, "parts");
+    CHECK(nbq_write_varint(&w, 5, 100) == NBQ_OK, "varint");
+    CHECK(nbq_write_varint_s(&w, 5, -1) == NBQ_OK, "varint_s");
+    CHECK(nbq_writer_align(&w, 8) == NBQ_OK && w.pos % 8 == 0, "align");
+    CHECK(nbq_write_f32(&w, 1.5f) == NBQ_OK && nbq_write_f64(&w, -2.25) == NBQ_OK, "floats");
+    CHECK(nbq_write_bits(&w, src, 16, 3, 10) == NBQ_OK, "bits");
+    const uint64_t end = w.pos;
+
+    /* the indexed _le forms see the same fields at the same positions */
+    CHECK(nbq_get_u64_le(buf, cap, 0, 40, &u64) == NBQ_OK && u64 == 0x123456789Aull, "get_u64_le");
+    CHECK(nbq_get_s64_le(buf, cap, 40, 20, &s64) == NBQ_OK && s64 == -7, "get_s64_le");
+    CHECK(nbq_get_u32_le(buf, cap, 60, 12, &u32) == NBQ_OK && u32 == 3000, "get_u32_le");
+    CHECK(nbq_get_s32_le(buf, cap, 72, 5, &s32) == NBQ_OK && s32 == -3, "get_s32_le");
+    CHECK(nbq_get_parts_le(buf, cap, 77, 33, &q) == NBQ_OK && q.hi == 1u && q.lo == 0x80000000u,
+          "get_parts_le");
+
+    /* an LSB-first reader walks it back */
+    CHECK(nbq_reader_init_le(&r, buf, end) == NBQ_OK && r.order == NBQ_LSB_FIRST, "reader_init_le");
+    CHECK(nbq_read_u64(&r, 40, &u64) == NBQ_OK && u64 == 0x123456789Aull, "read u64");
+    CHECK(nbq_read_s64(&r, 20, &s64) == NBQ_OK && s64 == -7, "read s64");
+    CHECK(nbq_read_u32(&r, 12, &u32) == NBQ_OK && u32 == 3000, "read u32");
+    CHECK(nbq_read_s32(&r, 5, &s32) == NBQ_OK && s32 == -3, "read s32");
+    CHECK(nbq_read_parts(&r, 33, &q) == NBQ_OK && q.hi == 1u && q.lo == 0x80000000u, "read parts");
+    CHECK(nbq_read_varint(&r, 5, &u64) == NBQ_OK && u64 == 100, "read varint");
+    CHECK(nbq_read_varint_s(&r, 5, &s64) == NBQ_OK && s64 == -1, "read varint_s");
+    CHECK(nbq_reader_align(&r, 8) == NBQ_OK && r.pos % 8 == 0, "reader align");
+    CHECK(nbq_read_f32(&r, &f) == NBQ_OK && f == 1.5f, "read f32");
+    CHECK(nbq_read_f64(&r, &d) == NBQ_OK && d == -2.25, "read f64");
+    CHECK(nbq_read_bits(&r, dst, 16, 3, 10) == NBQ_OK, "read bits");
+    CHECK(nbq_compare_bits_le(src, 16, 3, dst, 16, 3, 10, &cmp) == NBQ_OK && cmp == 0,
+          "read_bits copied the run in stream order");
+    CHECK(r.pos == end && nbq_reader_remaining(&r) == 0, "consumed exactly");
+
+    /* an MSB-first reader on the same bytes gets a different first field */
+    CHECK(nbq_reader_init(&r, buf, end) == NBQ_OK && nbq_read_u64(&r, 40, &u64) == NBQ_OK &&
+              u64 != 0x123456789Aull,
+          "order matters");
+
+    /* padding written by align is zero in stream order and checked that way */
+    memset(buf, 0, sizeof(buf));
+    CHECK(nbq_writer_init_le(&w, buf, cap) == NBQ_OK && nbq_write_u32(&w, 3, 7) == NBQ_OK &&
+              nbq_writer_align(&w, 8) == NBQ_OK && w.pos == 8 && buf[0] == 0x07,
+          "LSB-first pad lands in the high bits of the byte");
+    CHECK(nbq_reader_init_le(&r, buf, 16) == NBQ_OK && nbq_reader_seek(&r, 3) == NBQ_OK &&
+              nbq_reader_align(&r, 8) == NBQ_OK && r.pos == 8,
+          "zero padding accepted");
+    CHECK(nbq_put_u32_le(buf, cap, 5, 1, 1) == NBQ_OK && nbq_reader_seek(&r, 3) == NBQ_OK &&
+              nbq_reader_align(&r, 8) == NBQ_ERR_MALFORMED && r.pos == 3,
+          "a set pad bit is refused, cursor unmoved");
+
+    /* floats: little-endian bytes at an aligned position, big-endian for _be */
+    memset(buf, 0, sizeof(buf));
+    CHECK(nbq_put_f32_le(buf, cap, 0, 3.14159f) == NBQ_OK && buf[0] == 0xD0 && buf[1] == 0x0F &&
+              buf[2] == 0x49 && buf[3] == 0x40,
+          "put_f32_le is little-endian: %02X %02X %02X %02X", buf[0], buf[1], buf[2], buf[3]);
+    CHECK(nbq_get_f32_le(buf, cap, 0, &f) == NBQ_OK && nbq_f32_bits(f) == 0x40490FD0u,
+          "get_f32_le");
+    CHECK(nbq_put_f32_be(buf, cap, 32, 3.14159f) == NBQ_OK && buf[4] == 0x40 && buf[5] == 0x49 &&
+              buf[6] == 0x0F && buf[7] == 0xD0 && nbq_get_f32_be(buf, cap, 32, &f) == NBQ_OK &&
+              nbq_f32_bits(f) == 0x40490FD0u,
+          "_be float aliases are big-endian");
+    CHECK(nbq_put_f64_le(buf, cap, 64, -2.5) == NBQ_OK && buf[14] == 0x04 && buf[15] == 0xC0 &&
+              nbq_get_f64_le(buf, cap, 64, &d) == NBQ_OK && d == -2.5,
+          "f64 _le");
+    CHECK(nbq_put_f64_be(buf, cap, 128, -2.5) == NBQ_OK && buf[16] == 0xC0 && buf[17] == 0x04 &&
+              nbq_get_f64_be(buf, cap, 128, &d) == NBQ_OK && d == -2.5,
+          "f64 _be");
+    CHECK(nbq_put_f32_le(buf, cap, 3, -0.0f) == NBQ_OK && nbq_get_f32_le(buf, cap, 3, &f) == NBQ_OK &&
+              nbq_f32_bits(f) == 0x80000000u,
+          "unaligned negative zero survives");
+
+    /* the C writer in the other order produces different bytes for the same
+       calls, so a program that compares streams gets to see both */
+    memset(via_c, 0, sizeof(via_c));
+    CHECK(nbq_writer_init(&w, via_c, cap) == NBQ_OK && nbq_write_u32(&w, 12, 3000) == NBQ_OK,
+          "msb writer");
+    memset(buf, 0, sizeof(buf));
+    CHECK(nbq_writer_init_le(&w, buf, cap) == NBQ_OK && nbq_write_u32(&w, 12, 3000) == NBQ_OK,
+          "lsb writer");
+    CHECK(via_c[0] == 0xBB && via_c[1] == 0x80 && buf[0] == 0xB8 && buf[1] == 0x0B,
+          "3000 in 12 bits: BB 80 MSB first, B8 0B LSB first");
+
+#ifndef NBQ_NO_MALLOC
+    /* the growing writer keeps its order across growth */
+    CHECK(nbq_writer_init_alloc_le(&w, 16) == NBQ_OK && w.order == NBQ_LSB_FIRST, "init_alloc_le");
+    for (uint32_t i = 0; i < 100; i++)
+        CHECK(nbq_write_u32(&w, 12, i) == NBQ_OK, "grow");
+    CHECK(w.order == NBQ_LSB_FIRST && nbq_get_u32_le(w.buf, w.cap, 12 * 57, 12, &u32) == NBQ_OK &&
+              u32 == 57,
+          "order survives growth");
+    nbq_writer_free(&w);
+#endif
+}
+
+
 int main(void)
 {
     test_u64_every_width_and_offset();
@@ -807,6 +1405,12 @@ int main(void)
 #ifndef NBQ_NO_MALLOC
     test_allocating_writer_limits();
 #endif
+    test_both_orders_against_the_oracle();
+    test_orders_are_mirror_images();
+    test_deflate_blocks_from_zlib();
+    test_le_varints();
+    test_le_runs();
+    test_le_cursor_and_floats();
 
     printf("nbitq: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

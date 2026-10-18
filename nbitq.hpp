@@ -22,6 +22,10 @@
  * no state to wrap. Call `nbq_get_u32` and the other indexed functions
  * directly; they are plain C functions and work unchanged from C++.
  *
+ * Bit order is an argument of init, MSB first unless given, and is read back
+ * with order(). It is a property of the stream, so there are no `_le`
+ * methods, as there are no `_le` cursor functions in C.
+ *
  * Requires C++11. Define NBQ_NO_MALLOC to remove `OwningWriter`, as it removes
  * `nbq_writer_init_alloc` from the C library.
  *
@@ -43,16 +47,22 @@ class Reader {
 public:
     /** An empty reader. Every read fails until init() points it at a buffer. */
     Reader() { clear(); }
-    Reader(const uint8_t *buf, uint64_t bit_len) { init(buf, bit_len); }
+    Reader(const uint8_t *buf, uint64_t bit_len, nbq_bit_order order = NBQ_MSB_FIRST)
+    {
+        init(buf, bit_len, order);
+    }
 
-    /** nbq_reader_init. If it fails the reader is left empty, not half-set. */
-    nbq_result init(const uint8_t *buf, uint64_t bit_len)
+    /** nbq_reader_init or nbq_reader_init_le. If it fails the reader is left
+     *  empty, not half-set. */
+    nbq_result init(const uint8_t *buf, uint64_t bit_len, nbq_bit_order order = NBQ_MSB_FIRST)
     {
         clear();
-        return nbq_reader_init(&r_, buf, bit_len);
+        return order == NBQ_LSB_FIRST ? nbq_reader_init_le(&r_, buf, bit_len)
+                                      : nbq_reader_init(&r_, buf, bit_len);
     }
 
     const uint8_t *buffer() const { return r_.buf; }
+    nbq_bit_order order() const { return r_.order; }
     uint64_t length() const { return r_.bits; } /**< valid bits in the buffer */
     uint64_t pos() const { return r_.pos; }
     uint64_t remaining() const { return nbq_reader_remaining(&r_); }
@@ -84,6 +94,7 @@ private:
         r_.buf = nullptr;
         r_.bits = 0;
         r_.pos = 0;
+        r_.order = NBQ_MSB_FIRST;
     }
     nbq_reader r_;
 };
@@ -99,16 +110,22 @@ class Writer {
 public:
     /** An empty writer. Every write fails until init() points it at a buffer. */
     Writer() { clear(); }
-    Writer(uint8_t *buf, uint64_t bit_cap) { init(buf, bit_cap); }
+    Writer(uint8_t *buf, uint64_t bit_cap, nbq_bit_order order = NBQ_MSB_FIRST)
+    {
+        init(buf, bit_cap, order);
+    }
 
-    /** nbq_writer_init. If it fails the writer is left empty, not half-set. */
-    nbq_result init(uint8_t *buf, uint64_t bit_cap)
+    /** nbq_writer_init or nbq_writer_init_le. If it fails the writer is left
+     *  empty, not half-set. */
+    nbq_result init(uint8_t *buf, uint64_t bit_cap, nbq_bit_order order = NBQ_MSB_FIRST)
     {
         clear();
-        return nbq_writer_init(&w_, buf, bit_cap);
+        return order == NBQ_LSB_FIRST ? nbq_writer_init_le(&w_, buf, bit_cap)
+                                      : nbq_writer_init(&w_, buf, bit_cap);
     }
 
     uint8_t *buffer() { return w_.buf; }
+    nbq_bit_order order() const { return w_.order; }
     const uint8_t *buffer() const { return w_.buf; }
     uint64_t capacity() const { return w_.cap; } /**< in bits */
     uint64_t pos() const { return w_.pos; }      /**< bits written so far */
@@ -144,6 +161,7 @@ protected:
         w_.cap = 0;
         w_.pos = 0;
         w_.owns_buf = 0;
+        w_.order = NBQ_MSB_FIRST;
     }
     nbq_writer w_;
 };
@@ -158,15 +176,19 @@ protected:
 class OwningWriter : public Writer {
 public:
     OwningWriter() {}
-    explicit OwningWriter(uint64_t initial_bits) { init(initial_bits); }
+    explicit OwningWriter(uint64_t initial_bits, nbq_bit_order order = NBQ_MSB_FIRST)
+    {
+        init(initial_bits, order);
+    }
     ~OwningWriter() { nbq_writer_free(&w_); }
 
-    /** nbq_writer_init_alloc. Frees a buffer this writer already owns first.
-     *  0 bits picks the library's default size. */
-    nbq_result init(uint64_t initial_bits)
+    /** nbq_writer_init_alloc or nbq_writer_init_alloc_le. Frees a buffer this
+     *  writer already owns first. 0 bits picks the library's default size. */
+    nbq_result init(uint64_t initial_bits, nbq_bit_order order = NBQ_MSB_FIRST)
     {
         nbq_writer_free(&w_);
-        return nbq_writer_init_alloc(&w_, initial_bits);
+        return order == NBQ_LSB_FIRST ? nbq_writer_init_alloc_le(&w_, initial_bits)
+                                      : nbq_writer_init_alloc(&w_, initial_bits);
     }
 
     OwningWriter(OwningWriter &&other) : Writer() { take(other); }

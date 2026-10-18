@@ -15,7 +15,7 @@
   'use strict';
 
   var REPO = 'https://github.com/deftio/nbitq';
-  var VERSION = '0.1.2';   // kept in step by release.sh; shown beside the name
+  var VERSION = '0.2.0';   // kept in step by release.sh; shown beside the name
 
   var NAV = [
     { text: 'Home',            href: 'index.html' },

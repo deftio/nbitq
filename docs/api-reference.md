@@ -52,14 +52,19 @@ details. From C++, `nbitq.hpp` wraps the cursor groups as `nbq::Reader`,
 |---|---|
 | `nbq_copy_bits` | Move `n` bits from one offset to another, in the same or another buffer; overlap-safe |
 | `nbq_fill_bits` | Set `n` bits to 0 or 1 |
-| `nbq_compare_bits` | Compare two runs, MSB first, like `memcmp` |
+| `nbq_compare_bits` | Compare two runs, first differing bit in stream order decides, like `memcmp` |
 | `nbq_popcount_bits` | Count the 1 bits in a run |
+
+Every indexed function in the three tables above has an `_le` twin with the
+same signature that is LSB first, and a `_be` macro spelling of the plain
+name; see [Bit order](#bit-order).
 
 **Cursor** (a reader or writer struct holding a position)
 
 | Function | Does |
 |---|---|
-| `nbq_reader_init` / `nbq_writer_init` | Point a cursor at caller-owned storage; allocates nothing |
+| `nbq_reader_init` / `nbq_writer_init` | Point a cursor at caller-owned storage, MSB first; allocates nothing |
+| `nbq_reader_init_le` / `nbq_writer_init_le` / `nbq_writer_init_alloc_le` | The same, LSB first; every read or write through the cursor follows |
 | `nbq_writer_init_alloc` / `nbq_writer_free` | A writer over a heap buffer that doubles as needed; the only allocation in the library |
 | `nbq_reader_remaining` | Bits not yet read |
 | `nbq_reader_seek` / `nbq_writer_seek` | Move the position; a fixed writer refuses a position past its capacity |
@@ -107,7 +112,7 @@ is written and no cursor moves.
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
 #define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.1.2"
+#define NBQ_VERSION_STRING "0.2.0"
 #define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
 
 const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
@@ -122,6 +127,32 @@ uint32_t    nbq_version(void);          /* the linked library's NBQ_VERSION */
 
 Define `NBQ_NO_MALLOC` before compiling `nbitq.c` to remove
 `nbq_writer_init_alloc` and every hosted `#include`.
+
+## Bit order
+
+```c
+typedef enum { NBQ_MSB_FIRST = 0, NBQ_LSB_FIRST = 1 } nbq_bit_order;
+```
+
+The plain names are MSB first: bit 0 is the MSB of byte 0 and a value's top
+bit goes first. Every indexed function below has an `_le` twin with the same
+signature that is LSB first (bit 0 is the LSB of byte 0, a value's bit 0
+goes first) and a `_be` macro spelling of the plain name, so `nbq_get_u32`,
+`nbq_get_u32_be` and `nbq_get_u32_le` all exist. Cursors carry the order in
+the struct, set by the `_le` initialisers; every cursor function follows it
+and there are no `_le` cursor functions.
+
+At a byte-aligned position a 16-bit value is big-endian MSB first and
+little-endian LSB first, which is what the suffixes mean. Signed fields,
+zigzag, the float forms and the varint rules act on the assembled integer
+and are identical in both orders; a varint's groups land wherever the order
+puts them. Positions in the bit-run functions are in the stream's order on
+both sides. The container is MSB first.
+
+```
+19 in 5 bits, 3000 in 12, 0x55 in 7:   MSB first  9D DC 55     LSB first  13 77 AB
+0x1234 in 16 bits at bit 0:            MSB first  12 34        LSB first  34 12
+```
 
 ## Indexed API
 
@@ -239,26 +270,35 @@ anywhere.
 ```c
 typedef struct {
     const uint8_t *buf;
-    uint64_t bits;      /* valid bits in buf  */
-    uint64_t pos;       /* next bit to read   */
+    uint64_t bits;        /* valid bits in buf  */
+    uint64_t pos;         /* next bit to read   */
+    nbq_bit_order order;  /* set by the initialiser */
 } nbq_reader;
 
 typedef struct {
     uint8_t *buf;
-    uint64_t cap;       /* capacity in bits   */
-    uint64_t pos;       /* next bit to write  */
-    int owns_buf;       /* nonzero if nbq_writer_init_alloc allocated buf */
+    uint64_t cap;         /* capacity in bits   */
+    uint64_t pos;         /* next bit to write  */
+    int owns_buf;         /* nonzero if nbq_writer_init_alloc allocated buf */
+    nbq_bit_order order;  /* set by the initialiser */
 } nbq_writer;
 ```
 
 ### Setup
 
 ```c
-nbq_result nbq_reader_init(nbq_reader *r, const uint8_t *buf, uint64_t bit_len);
+nbq_result nbq_reader_init(nbq_reader *r, const uint8_t *buf, uint64_t bit_len);       /* MSB first */
+nbq_result nbq_reader_init_le(nbq_reader *r, const uint8_t *buf, uint64_t bit_len);    /* LSB first */
 nbq_result nbq_writer_init(nbq_writer *w, uint8_t *buf, uint64_t bit_cap);
-nbq_result nbq_writer_init_alloc(nbq_writer *w, uint64_t initial_bits);   /* not under NBQ_NO_MALLOC */
+nbq_result nbq_writer_init_le(nbq_writer *w, uint8_t *buf, uint64_t bit_cap);
+nbq_result nbq_writer_init_alloc(nbq_writer *w, uint64_t initial_bits);      /* not under NBQ_NO_MALLOC */
+nbq_result nbq_writer_init_alloc_le(nbq_writer *w, uint64_t initial_bits);
 void       nbq_writer_free(nbq_writer *w);
 ```
+
+- The `_le` initialisers set `order` to `NBQ_LSB_FIRST`; the others set
+  `NBQ_MSB_FIRST`. Every read, write, align and bit-run call through the
+  cursor follows it.
 
 - `nbq_reader_init` and `nbq_writer_init` allocate nothing. The reader's
   buffer may be in ROM. A fixed writer never grows; a write past `bit_cap`
@@ -357,6 +397,48 @@ inserting the 3-bit value 6 at bit 5 gives `9E BB 8A A0`, 27 bits, and the
 fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores
 `9D DC 55`. An insert that would pass `cap` fails with `NBQ_ERR_RANGE` and
 moves nothing. Insertion is linear in the number of bits after `pos`.
+
+### Reading backwards
+
+Some formats are read from the end: a trailer whose members are found from
+the last one, or an entropy coder that emits in reverse. Bit order and
+traversal direction are independent, so there is no backward reader. The
+indexed functions with a position that counts down do it, in either order:
+
+```c
+uint64_t pos = bit_len;                      /* start at the end */
+pos -= 12; nbq_get_u32_le(buf, bit_len, pos, 12, &offset);
+pos -= 5;  nbq_get_u32_le(buf, bit_len, pos, 5,  &symbol);
+```
+
+Each member is read at the position where it ends minus its width, which
+any backward format must make known. A miscount that subtracts past the
+start wraps to a huge position and is refused with `NBQ_ERR_RANGE`, because
+the range check compares against the length rather than computing `pos + n`.
+
+A varint can be walked backwards too. Its last group is the one with the
+continuation bit clear, and every earlier group of the same varint has it
+set, so step back over the group that ends at the cursor, then keep stepping
+while the group before is a continued one. Run against the library, at base
+8 and at an unaligned base 5:
+
+```c
+/* Start of the varint that ends at pos. LSB first; any base. */
+static uint64_t varint_start_before(const uint8_t *buf, uint64_t bit_len,
+                                    uint64_t pos, unsigned base)
+{
+    const uint64_t cont = (uint64_t)1 << (base - 1);
+    uint64_t start = pos, g;
+    for (;;) {
+        start -= base;                                   /* the group that ends here */
+        if (start < base) break;                         /* nothing before it */
+        nbq_get_u64_le(buf, bit_len, start - base, base, &g);
+        if ((g & cont) == 0u) break;                     /* the group before ends another varint */
+    }
+    return start;
+}
+/* then: nbq_get_varint_le(buf, bit_len, varint_start_before(...), base, &value, NULL) */
+```
 
 ## C++ wrapper
 

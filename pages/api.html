@@ -52,12 +52,14 @@
           S.table(DOES, [
             row('nbq_copy_bits', 'Move n bits from one offset to another, in the same or another buffer; overlap-safe'),
             row('nbq_fill_bits', 'Set n bits to 0 or 1'),
-            row('nbq_compare_bits', 'Compare two runs, MSB first, like memcmp'),
-            row('nbq_popcount_bits', 'Count the 1 bits in a run')
+            row('nbq_compare_bits', 'Compare two runs; the first differing bit in stream order decides, like memcmp'),
+            row('nbq_popcount_bits', 'Count the 1 bits in a run'),
+            row('…_le / …_be', 'Every indexed function above has an _le twin with the same signature, LSB first, and a _be spelling of the plain name; see Bit order')
           ]),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Cursor (a reader or writer struct holding a position)' },
           S.table(DOES, [
-            row('nbq_reader_init / nbq_writer_init', 'Point a cursor at caller-owned storage; allocates nothing'),
+            row('nbq_reader_init / nbq_writer_init', 'Point a cursor at caller-owned storage, MSB first; allocates nothing'),
+            row('nbq_reader_init_le / nbq_writer_init_le / nbq_writer_init_alloc_le', 'The same, LSB first; every read or write through the cursor follows'),
             row('nbq_writer_init_alloc / nbq_writer_free', 'A writer over a heap buffer that doubles as needed; the only allocation in the library'),
             row('nbq_reader_remaining', 'Bits not yet read'),
             row('nbq_reader_seek / nbq_writer_seek', 'Move the position; a fixed writer refuses a position past its capacity'),
@@ -108,7 +110,7 @@
 
         S.section('Constants and macros', [
           S.code([
-            '#define NBQ_VERSION_STRING   "0.1.2"   /* and NBQ_VERSION_MAJOR / MINOR / PATCH */',
+            '#define NBQ_VERSION_STRING   "0.2.0"   /* and NBQ_VERSION_MAJOR / MINOR / PATCH */',
             '#define NBQ_VERSION          /* (MAJOR << 16) | (MINOR << 8) | PATCH */',
             '',
             'const char *nbq_version_string(void);  /* the linked library\'s NBQ_VERSION_STRING */',
@@ -120,6 +122,16 @@
           ]),
           S.p(['Define ', S.c('NBQ_NO_MALLOC'), ' before compiling ', S.c('nbitq.c'), ' to remove ', S.c('nbq_writer_init_alloc'), ' and every hosted ', S.c('#include'), '.'])
         ], 'constants'),
+
+        S.section('Bit order', [
+          S.code(['typedef enum { NBQ_MSB_FIRST = 0, NBQ_LSB_FIRST = 1 } nbq_bit_order;']),
+          S.p(['The plain names are MSB first: bit 0 is the MSB of byte 0 and a value\'s top bit goes first. Every indexed function below has an ', S.c('_le'), ' twin with the same signature that is LSB first (bit 0 is the LSB of byte 0, a value\'s bit 0 goes first) and a ', S.c('_be'), ' macro spelling of the plain name, so ', S.c('nbq_get_u32'), ', ', S.c('nbq_get_u32_be'), ' and ', S.c('nbq_get_u32_le'), ' all exist. Cursors carry the order in the struct, set by the ', S.c('_le'), ' initialisers; every cursor function follows it and there are no ', S.c('_le'), ' cursor functions.']),
+          S.p(['At a byte-aligned position a 16-bit value is big-endian MSB first and little-endian LSB first, which is what the suffixes mean. Signed fields, zigzag, the float forms and the varint rules act on the assembled integer and are identical in both orders; a varint\'s groups land wherever the order puts them. Positions in the bit-run functions are in the stream\'s order on both sides. The container is MSB first.']),
+          S.code([
+            '19 in 5 bits, 3000 in 12, 0x55 in 7:   MSB first  9D DC 55     LSB first  13 77 AB',
+            '0x1234 in 16 bits at bit 0:            MSB first  12 34        LSB first  34 12'
+          ])
+        ], 'bit-order'),
 
         S.section('Indexed API', [
           S.p(['No state, no allocation. Each call is bounds-checked against ', S.c('bit_len'), ' or ', S.c('bit_cap'), '.']),
@@ -206,22 +218,27 @@
           S.code([
             'typedef struct {',
             '    const uint8_t *buf;',
-            '    uint64_t bits;      /* valid bits in buf  */',
-            '    uint64_t pos;       /* next bit to read   */',
+            '    uint64_t bits;        /* valid bits in buf  */',
+            '    uint64_t pos;         /* next bit to read   */',
+            '    nbq_bit_order order;  /* set by the initialiser */',
             '} nbq_reader;',
             '',
             'typedef struct {',
             '    uint8_t *buf;',
-            '    uint64_t cap;       /* capacity in bits   */',
-            '    uint64_t pos;       /* next bit to write  */',
-            '    int owns_buf;       /* nonzero if nbq_writer_init_alloc allocated buf */',
+            '    uint64_t cap;         /* capacity in bits   */',
+            '    uint64_t pos;         /* next bit to write  */',
+            '    int owns_buf;         /* nonzero if nbq_writer_init_alloc allocated buf */',
+            '    nbq_bit_order order;  /* set by the initialiser */',
             '} nbq_writer;'
           ]),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Setup' },
           S.table(FN, [
-            fn('nbq_reader_init(r, buf, bit_len)', 'Allocates nothing; buf may be in ROM.'),
-            fn('nbq_writer_init(w, buf, bit_cap)', 'Allocates nothing, never grows; a write past bit_cap is NBQ_ERR_RANGE.'),
+            fn('nbq_reader_init(r, buf, bit_len)', 'MSB first. Allocates nothing; buf may be in ROM.'),
+            fn('nbq_reader_init_le(r, buf, bit_len)', 'The same, LSB first; every read through r follows.'),
+            fn('nbq_writer_init(w, buf, bit_cap)', 'MSB first. Allocates nothing, never grows; a write past bit_cap is NBQ_ERR_RANGE.'),
+            fn('nbq_writer_init_le(w, buf, bit_cap)', 'The same, LSB first.'),
             fn('nbq_writer_init_alloc(w, initial_bits)', 'Owns a heap buffer and doubles it as needed. The only allocating function. Absent under NBQ_NO_MALLOC.'),
+            fn('nbq_writer_init_alloc_le(w, initial_bits)', 'The same, LSB first.'),
             fn('nbq_writer_free(w)', 'Releases a buffer that init_alloc allocated; a no-op otherwise.')
           ]),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Position' },
@@ -288,6 +305,32 @@
           ]),
           S.p(['Starting from the 24-bit example ', S.c('9D DC 55'), ' (fields 19, 3000, 0x55), inserting the 3-bit value 6 at bit 5 gives ', S.c('9E BB 8A A0'), ', 27 bits, and the fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores ', S.c('9D DC 55'), '. An insert that would pass ', S.c('cap'), ' fails with ', S.c('NBQ_ERR_RANGE'), ' and moves nothing. Insertion is linear in the number of bits after ', S.c('pos'), '.']),
           S.bits({ alt: 'the example after inserting 3 bits at bit 5', bytes: [0x9E, 0xBB, 0x8A, 0xA0], fields: [ { name: '19', from: 0, len: 5 }, { name: '6', from: 5, len: 3 }, { name: '3000', from: 8, len: 12 }, { name: '0x55', from: 20, len: 7 } ] }),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Reading backwards' },
+          S.p(['Some formats are read from the end: a trailer whose members are found from the last one, or an entropy coder that emits in reverse. Bit order and traversal direction are independent, so there is no backward reader. The indexed functions with a position that counts down do it, in either order:']),
+          S.code([
+            'uint64_t pos = bit_len;                      /* start at the end */',
+            'pos -= 12; nbq_get_u32_le(buf, bit_len, pos, 12, &offset);',
+            'pos -= 5;  nbq_get_u32_le(buf, bit_len, pos, 5,  &symbol);'
+          ]),
+          S.p(['Each member is read at the position where it ends minus its width, which any backward format must make known. A miscount that subtracts past the start wraps to a huge position and is refused with ', S.c('NBQ_ERR_RANGE'), ', because the range check compares against the length rather than computing ', S.c('pos + n'), '.']),
+          S.p('A varint can be walked backwards too. Its last group is the one with the continuation bit clear, and every earlier group of the same varint has it set, so step back over the group that ends at the cursor, then keep stepping while the group before is a continued one. Run against the library, at base 8 and at an unaligned base 5:'),
+          S.code([
+            '/* Start of the varint that ends at pos. LSB first; any base. */',
+            'static uint64_t varint_start_before(const uint8_t *buf, uint64_t bit_len,',
+            '                                    uint64_t pos, unsigned base)',
+            '{',
+            '    const uint64_t cont = (uint64_t)1 << (base - 1);',
+            '    uint64_t start = pos, g;',
+            '    for (;;) {',
+            '        start -= base;                                   /* the group that ends here */',
+            '        if (start < base) break;                         /* nothing before it */',
+            '        nbq_get_u64_le(buf, bit_len, start - base, base, &g);',
+            '        if ((g & cont) == 0u) break;                     /* the group before ends another varint */',
+            '    }',
+            '    return start;',
+            '}',
+            '/* then: nbq_get_varint_le(buf, bit_len, varint_start_before(...), base, &value, NULL) */'
+          ])
         ], 'not-provided'),
 
         S.section('C++ wrapper', [

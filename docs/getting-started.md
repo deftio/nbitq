@@ -74,7 +74,7 @@ Or fetched at configure time:
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.1.2)
+    GIT_TAG        v0.2.0)
 FetchContent_MakeAvailable(nbitq)
 target_link_libraries(your_target PRIVATE nbitq)
 ```
@@ -111,6 +111,30 @@ came before, which is most formats.
 The structs are public and plain: on the stack, in static storage, or as a
 member of another struct. There is no create/destroy pair. `nbq_reader_init`
 accepts a `const` buffer, including one in ROM.
+
+## Bit order
+
+The plain names are MSB first: bit 0 is the MSB of byte 0 and a value's top
+bit goes first, as in H.264 and most network formats. For a stream numbered
+from the LSB, as DEFLATE and Vorbis are, every indexed function has an `_le`
+twin with the same signature, and cursors take the order from their
+initialiser:
+
+```c
+uint32_t bfinal, btype, len;
+nbq_reader r;
+nbq_reader_init_le(&r, deflate, bit_len);   /* LSB first from here on */
+nbq_read_u32(&r, 1, &bfinal);
+nbq_read_u32(&r, 2, &btype);
+nbq_reader_align(&r, 8);                    /* a stored block pads to a byte */
+nbq_read_u32(&r, 16, &len);                 /* LEN, little-endian as DEFLATE writes it */
+
+nbq_get_u32_le(deflate, bit_len, 8, 16, &len);   /* the same field, indexed */
+```
+
+The `_be` names are spellings of the plain ones, for code that reads two
+streams side by side. The order is a property of the stream: declare it once
+and the layout within it is fixed.
 
 ## Result codes
 
@@ -205,11 +229,11 @@ clang --target=thumbv7em-none-eabi -Oz -std=c99 -ffreestanding -nostdinc \
 
 | target | `.text` |
 |---|---:|
-| Cortex-M3/M4/M7 (Thumb-2) | 4,793 bytes |
-| Cortex-M0 (Thumb-1) | 5,025 |
-| ARM (v7-A) | 7,249 |
-| AArch64 | 4,389 |
-| x86-64 | 4,545 |
+| Cortex-M3/M4/M7 (Thumb-2) | 6,555 bytes |
+| Cortex-M0 (Thumb-1) | 7,407 |
+| ARM (v7-A) | 11,025 |
+| AArch64 | 5,477 |
+| x86-64 | 5,940 |
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state. Each
 reader or writer is independent, so the library is reentrant per instance.
