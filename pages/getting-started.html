@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Getting started with nbitq</title>
-  <meta name="description" content="Install nbitq by copying two files, write and read bit-packed fields, check results, use varints, and build for embedded targets.">
+  <meta name="description" content="Install nbitq by copying two files, write and read bit-packed fields, check results, use varints and UTF-8 code points, and build for embedded targets.">
   <meta name="author" content="M. A. Chatterjee (github.com/deftio)">
   <script src="https://cdn.jsdelivr.net/npm/bitwrench@2.1.11/dist/bitwrench.umd.min.js"></script>
   <script src="site.js"></script>
@@ -18,7 +18,7 @@
 
     S.page('getting-started.html', {
       title: 'Getting started',
-      subtitle: 'Quickstart, install, result codes, varints, the growing writer, embedded builds.',
+      subtitle: 'Quickstart, install, result codes, varints, UTF-8, the growing writer, embedded builds.',
       content: [
 
         S.section('Quickstart', [
@@ -73,7 +73,7 @@
             'include(FetchContent)',
             'FetchContent_Declare(nbitq',
             '    GIT_REPOSITORY https://github.com/deftio/nbitq.git',
-            '    GIT_TAG        v0.2.0)',
+            '    GIT_TAG        v0.2.1)',
             'FetchContent_MakeAvailable(nbitq)',
             'target_link_libraries(your_target PRIVATE nbitq)'
           ]),
@@ -132,7 +132,7 @@
             { code: 'NBQ_ERR_PARAM', meaning: 'null pointer, or a width or base out of range' },
             { code: 'NBQ_ERR_RANGE', meaning: 'the operation would touch a bit at or past the end' },
             { code: 'NBQ_ERR_OVERFLOW', meaning: 'the value does not fit the destination type' },
-            { code: 'NBQ_ERR_MALFORMED', meaning: 'a varint that is overlong or impossible; a bad container' },
+            { code: 'NBQ_ERR_MALFORMED', meaning: 'a varint that is overlong or impossible; a UTF-8 sequence that is not well-formed; a bad container' },
             { code: 'NBQ_ERR_ALLOC', meaning: 'only from the growing writer, when realloc fails' }
           ]),
           S.callout('bit_len is the one input the library cannot check.', ['Every operation is checked against the ', S.c('bit_len'), ' it is given, so pass the real number of valid bits, not a round number.'])
@@ -169,6 +169,19 @@
           S.p([S.c('nbq_varint_bits'), ' returns the cost of a value at a base without writing it, so a corpus can be measured at several bases. Signed varints (', S.c('nbq_write_varint_s'), ') use zigzag, so −1 costs the same as 0. ', { t: 'a', a: { href: 'how-it-works.html#varints' }, c: 'How it works §5' }, ' has the bit layout.'])
         ], 'varints'),
 
+        S.section('UTF-8 code points', [
+          S.p('One code point in, one out, as the 1 to 4 bytes of its UTF-8 encoding:'),
+          S.code([
+            'nbq_write_utf8(&w, 0x00E9);       /* é: C3 A9 when aligned              */',
+            'nbq_write_utf8(&w, 0x20AC);       /* €: E2 82 AC                        */',
+            'nbq_write_utf8(&w, 0x1F600);      /* 😀: F0 9F 98 80                    */',
+            '',
+            'uint32_t cp;',
+            'nbq_read_utf8(&r, &cp);           /* cp == 0xE9; the cursor moves 16 bits */'
+          ]),
+          S.p(['The decoder accepts only well-formed UTF-8 and returns ', S.c('NBQ_ERR_MALFORMED'), ' for anything else: an overlong form, a surrogate, a bad continuation byte. A sequence the buffer ends in the middle of is ', S.c('NBQ_ERR_RANGE'), ', so a parser reading from a stream knows to wait for more. The encoder refuses a surrogate or a value above U+10FFFF with ', S.c('NBQ_ERR_PARAM'), '. A string is a loop over these calls with a length or a terminator of the format’s choosing; the ', { t: 'a', a: { href: 'api.html' }, c: 'API reference' }, ' has both shapes.'])
+        ], 'utf8'),
+
         S.section('Growing writer', [
           S.p('For output whose size is not known up front:'),
           S.code([
@@ -188,15 +201,51 @@
             '      -isystem "$(clang -print-resource-dir)/include" \\',
             '      -DNBQ_NO_MALLOC -c nbitq.c'
           ]),
-          S.table([{ key: 'target', label: 'Target' }, { key: 'text', label: '.text (bytes)' }], [
-            { target: 'Cortex-M3 / M4 / M7 (Thumb-2)', text: '6,555' },
-            { target: 'Cortex-M0 (Thumb-1)', text: '7,407' },
-            { target: 'ARM v7-A', text: '11,025' },
-            { target: 'AArch64', text: '5,477' },
-            { target: 'x86-64', text: '5,940' }
+          S.p(['The core compiled for every toolchain in ', S.c('tools/sizes.sh'), ', as bytes of ', S.c('.text'), ' at ', S.c('-Os'), ' with ', S.c('NBQ_NO_MALLOC'), ' and ', S.c('-ffreestanding'), '. ', S.c('core'), ' is the whole library. ', S.c('u32 cursor only'), ' is what links in for a program that calls only ', S.c('nbq_reader_init'), ', ', S.c('nbq_writer_init'), ', ', S.c('nbq_read_u32'), ' and ', S.c('nbq_write_u32'), ', with function sections garbage-collected from those roots. ', S.c('nbitq32'), ' is ', S.c('nbitq32.c'), ' alone; see ', { t: 'a', a: { href: '#nbitq32' }, c: 'nbitq32' }, '.']),
+          S.table(S.SIZE_COLS, [
+            // <crossbuild-sizes>
+            { cpu: 'AVR ATtiny85', bits: '8', compiler: 'avr-gcc 5.4.0', core: '26,373', u32: '1,972', nbitq32: '1,032' },
+            { cpu: 'AVR ATmega328P', bits: '8', compiler: 'avr-gcc 5.4.0', core: '26,989', u32: '2,014', nbitq32: '1,032' },
+            { cpu: '8051', bits: '8', compiler: 'sdcc -mmcs51 4.0.0', core: 'n/a', u32: 'n/a', nbitq32: '1,353' },
+            { cpu: 'STM8', bits: '8', compiler: 'sdcc -mstm8 4.0.0', core: 'n/a', u32: 'n/a', nbitq32: '750' },
+            { cpu: 'Z80', bits: '8', compiler: 'sdcc -mz80 4.0.0', core: 'n/a', u32: 'n/a', nbitq32: '1,404' },
+            { cpu: 'MSP430 G2553', bits: '16', compiler: 'msp430-gcc 4.6.3', core: '16,784', u32: '1,412', nbitq32: '756' },
+            { cpu: 'Cortex-M4 (Thumb-2)', bits: '32', compiler: 'arm-none-eabi-gcc 10.3.1', core: '7,281', u32: '594', nbitq32: '354' },
+            { cpu: 'Xtensa LX7 (ESP32-S3)', bits: '32', compiler: 'xtensa-esp32s3-elf-gcc 15.2.0', core: '7,589', u32: '648', nbitq32: '416' },
+            { cpu: 'Cortex-M0 (Thumb-1)', bits: '32', compiler: 'arm-none-eabi-gcc 10.3.1', core: '7,609', u32: '636', nbitq32: '356' },
+            { cpu: 'Xtensa LX6 (ESP32)', bits: '32', compiler: 'xtensa-esp32-elf-gcc 15.2.0', core: '7,649', u32: '646', nbitq32: '400' },
+            { cpu: 'RISC-V rv32imac', bits: '32', compiler: 'riscv64-unknown-elf-gcc 10.2.0', core: '8,007', u32: '760', nbitq32: '382' },
+            { cpu: 'Xtensa LX106 (ESP8266)', bits: '32', compiler: 'xtensa-lx106-elf-gcc 10.3.0', core: '9,321', u32: '803', nbitq32: '447' },
+            { cpu: 'm68k', bits: '32', compiler: 'm68k-linux-gnu-gcc 11.4.0', core: '9,955', u32: '912', nbitq32: '484' },
+            { cpu: 'ARM v7-A (A32)', bits: '32', compiler: 'arm-none-eabi-gcc 10.3.1', core: '10,889', u32: '932', nbitq32: '596' },
+            { cpu: 'MIPS32 (little-endian)', bits: '32', compiler: 'mipsel-linux-gnu-gcc 10.3.0', core: '14,400', u32: '1,164', nbitq32: '624' },
+            { cpu: 'PowerPC', bits: '32', compiler: 'powerpc-linux-gnu-gcc 11.4.0', core: '15,229', u32: '1,384', nbitq32: '684' },
+            { cpu: 'x86-32', bits: '32', compiler: 'gcc 11.4.0', core: '15,639', u32: '1,306', nbitq32: '756' },
+            { cpu: 'RISC-V rv64gc', bits: '64', compiler: 'riscv64-linux-gnu-gcc 11.4.0', core: '5,876', u32: '660', nbitq32: '386' },
+            { cpu: 'x86-64', bits: '64', compiler: 'clang 14.0.0', core: '6,886', u32: '583', nbitq32: '374' },
+            { cpu: 'Apple Silicon (arm64 macOS)', bits: '64', compiler: 'Apple clang 21.0.0', core: '7,072', u32: '672', nbitq32: '428' },
+            { cpu: 'AArch64', bits: '64', compiler: 'aarch64-linux-gnu-gcc 11.4.0', core: '9,527', u32: '1,056', nbitq32: '664' },
+            { cpu: 'x86-64', bits: '64', compiler: 'gcc 11.4.0', core: '9,535', u32: '1,039', nbitq32: '710' },
+            { cpu: 'MIPS64 (little-endian)', bits: '64', compiler: 'mips64el-linux-gnuabi64-gcc 10.3.0', core: '10,112', u32: '1,024', nbitq32: '624' }
+            // </crossbuild-sizes>
           ]),
+          S.p(['The compilers are the ones Ubuntu 22.04 packages, run in the Docker image ', S.c('tools/Dockerfile.crossbuild'), ', plus Apple clang on an arm64 Mac; ', S.c('make crossbuild'), ' then ', S.c('make sizes-table'), ' reproduces the table. On an 8-bit or 16-bit CPU every 64-bit shift is a call into compiler support code, which is why the whole core is several times larger there while the u32 path is not. The SDCC rows have no core; the next section says why.']),
           S.p(['No stdio, no floating-point arithmetic, no libm, no recursion, no global state; each reader or writer is independent. On a 32-bit CPU without native 64-bit arithmetic, the ', S.c('u32'), ' functions cover fields up to 32 bits and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' cover wider ones. They produce the same bits as the ', S.c('u64'), ' functions; only the arithmetic differs.'])
         ], 'embedded'),
+
+        S.section('nbitq32: the u32 pair with 32-bit positions', [
+          S.p(['Everything above is the library: ', S.c('nbitq.h'), ' and ', S.c('nbitq.c'), ', with 64-bit positions and values, for any CPU that has a 64-bit type, which includes every 32-bit microcontroller. This section is for the targets that do not.']),
+          S.p(['On an 8-bit or 16-bit CPU every 64-bit operation is a call into compiler support code, and the position arithmetic costs more than the value arithmetic. SDCC, the usual compiler for Z80, 8051 and STM8, has no 64-bit type at all and cannot compile ', S.c('nbitq.c'), '. For those targets ', S.c('nbitq32.h'), ' and ', S.c('nbitq32.c'), ' are ', S.c('nbq_get_u32'), ' and ', S.c('nbq_put_u32'), ' with ', S.c('uint32_t'), ' positions and lengths, and nothing else:']),
+          S.code([
+            '#include "nbitq32.h"',
+            '',
+            'uint8_t buf[4] = {0};',
+            'nbq32_put(buf, 32, 5, 12, 3000);       /* uint32_t capacity and position */',
+            'uint32_t v;',
+            'nbq32_get(buf, 32, 5, 12, &v);         /* v == 3000; same bits as nbq_get_u32 */'
+          ]),
+          S.p(['Two functions and their ', S.c('_le'), ' twins, ', S.c('_be'), ' aliases, the same bit numbering, the same refusals and the same result-code values as ', S.c('nbq_result'), '. No cursor: ', S.c('pos += n'), ' is one. The two files do not include ', S.c('nbitq.h'), ', so they are copied alone, and ', S.c('test_nbitq32.c'), ' checks that they write the bytes ', S.c('nbq_put_u32'), ' writes for every width and offset in both orders. In the table above it is 354 bytes on Cortex-M4, 1,032 on AVR, and with SDCC 1,404 on Z80, 1,353 on 8051 and 750 on STM8.'])
+        ], 'nbitq32'),
 
         S.section('From C++', [
           S.p(['The headers are ', S.c('extern "C"'), ', so every function works unchanged from C++. ', S.c('nbitq.hpp'), ' adds the cursor API as classes. Each method is one call into the C library with the ', S.c('nbq_read_'), ' or ', S.c('nbq_write_'), ' prefix dropped, so ', S.c('nbq_read_u32(&r, n, &v)'), ' is ', S.c('r.u32(n, &v)'), ':']),

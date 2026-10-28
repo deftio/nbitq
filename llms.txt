@@ -1,10 +1,10 @@
 # nbitq
 
-> C99 library that packs and unpacks n-bit integers in a bit stream: values of any width from 1 to 64 bits, written back to back or at any bit position in a byte buffer, and read back as native integers. For compressed formats, wire protocols, register maps and succinct data structures, where data is laid out in bits rather than bytes. Either bit order: MSB first by default (H.264, network formats), LSB first through `_le` names and cursor initialisers (DEFLATE, Vorbis), one implementation underneath. Two source files, no dependencies, about 5.9 KB compiled. Offers both indexed (`nbq_get_u32` / `nbq_put_u32` at an explicit bit position) and cursor (`nbq_read_u32` / `nbq_write_u32` through a `nbq_reader` / `nbq_writer`) forms over the same buffer, sharing one implementation. Also variable-width varints (base 2 to 64; base 8 is LEB128), signed fields, f32/f64 as bit patterns, and bit-run copy/fill/compare/popcount. BSD-2-Clause.
+> C99 library that packs and unpacks n-bit integers in a bit stream: values of any width from 1 to 64 bits, written back to back or at any bit position in a byte buffer, and read back as native integers. For compressed formats, wire protocols, register maps and succinct data structures, where data is laid out in bits rather than bytes. Either bit order: MSB first by default (H.264, network formats), LSB first through `_le` names and cursor initialisers (DEFLATE, Vorbis), one implementation underneath. Two source files, no dependencies, about 6.9 KB compiled. Offers both indexed (`nbq_get_u32` / `nbq_put_u32` at an explicit bit position) and cursor (`nbq_read_u32` / `nbq_write_u32` through a `nbq_reader` / `nbq_writer`) forms over the same buffer, sharing one implementation. Also variable-width varints (base 2 to 64; base 8 is LEB128), UTF-8 code points one at a time (`nbq_get_utf8` / `nbq_put_utf8`, well-formed sequences only), signed fields, f32/f64 as bit patterns, and bit-run copy/fill/compare/popcount. BSD-2-Clause.
 
 Vendored by the triepack and hutter projects, which need the paired indexed and cursor primitives. The bit numbering, varint format and result codes are fixed and will not change.
 
-Intended use: copy `nbitq.h` and `nbitq.c` into a project and compile with `-std=c99`. Optional: `nbitq_container.h` / `nbitq_container.c` for an in-memory `.nbq` wrapper with CRC-64/XZ. Define `NBQ_NO_MALLOC` for a freestanding build. `nbitq.hpp` is an optional C++11 wrapper over the cursor API.
+Intended use: copy `nbitq.h` and `nbitq.c` into a project and compile with `-std=c99`. Optional: `nbitq_container.h` / `nbitq_container.c` for an in-memory `.nbq` wrapper with CRC-64/XZ. Define `NBQ_NO_MALLOC` for a freestanding build. `nbitq.hpp` is an optional C++11 wrapper over the cursor API. `nbitq32.h` / `nbitq32.c` is the u32 pair with 32-bit positions (`nbq32_get` / `nbq32_put`), a separate two-file copy with no 64-bit type for 8-bit and 16-bit CPUs and for SDCC; it writes the bytes `nbq_put_u32` writes.
 
 ## Documentation
 
@@ -21,6 +21,7 @@ Intended use: copy `nbitq.h` and `nbitq.c` into a project and compile with `-std
 - [nbitq.c](https://github.com/deftio/nbitq/blob/main/nbitq.c): the implementation
 - [nbitq.hpp](https://github.com/deftio/nbitq/blob/main/nbitq.hpp): optional header-only C++ wrapper over the cursor API (nbq::Reader, nbq::Writer, nbq::OwningWriter); each method one call into the C library
 - [nbitq_container.h](https://github.com/deftio/nbitq/blob/main/nbitq_container.h): optional container and CRC-64
+- [nbitq32.h](https://github.com/deftio/nbitq/blob/main/nbitq32.h): the u32 pair with 32-bit positions, separate from the core; `test_nbitq32.c` proves it writes the same bytes
 - [test_nbitq.c](https://github.com/deftio/nbitq/blob/main/test_nbitq.c): exhaustive tests; the clearest statement of expected behaviour
 - [CHANGELOG.md](https://github.com/deftio/nbitq/blob/main/CHANGELOG.md): versions and changes
 
@@ -29,4 +30,5 @@ Intended use: copy `nbitq.h` and `nbitq.c` into a project and compile with `-std
 - [Website](https://deftio.github.io/nbitq/): the same content as docs/, as static pages
 - [CONTRIBUTING.md](https://github.com/deftio/nbitq/blob/main/CONTRIBUTING.md): what a change must satisfy
 - [release.sh](https://github.com/deftio/nbitq/blob/main/release.sh): the CI suite and version bump as one script
+- [tools/](https://github.com/deftio/nbitq/tree/main/tools): cross-compile the core on every toolchain (Docker) and rewrite the compiled-size tables in the docs
 - [SECURITY.md](https://github.com/deftio/nbitq/blob/main/SECURITY.md): reporting

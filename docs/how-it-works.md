@@ -146,7 +146,7 @@ does not know which it is; the caller does.
 the value fits in `n` bits, because "the low n bits" is a well-defined
 operation in its own right.
 
-## 5. Varints
+## 5. Varints and UTF-8
 
 A varint stores a number in as many fixed-size groups as it needs. Each
 group has `base` bits: `base − 1` payload bits and one continuation bit
@@ -208,6 +208,39 @@ bytes.
 `nbq_put_varint_s` applies zigzag first: 0 → 0, −1 → 1, 1 → 2, −2 → 3, and
 so on. Small negative numbers stay small. Measure signed data with
 `nbq_varint_bits_s`, because the zigzag changes the answer.
+
+### UTF-8
+
+A code point is an integer and UTF-8 is a self-delimiting encoding of it,
+so it sits beside the varints: the first byte says how many follow, and
+one value has one encoding. `nbq_put_utf8` writes the 1 to 4 bytes as
+8-bit fields in the stream's order; `nbq_get_utf8` reads the lead byte,
+then the continuation bytes it announces.
+
+```c
+nbq_put_utf8(buf, cap, 0, 0x20AC, &next);   /* the euro sign */
+```
+
+```
+U+20AC = 0010 0000 1010 1100, 16 bits: three bytes
+byte 0:  1110 0010   lead, "three bytes", top 4 bits 0010       =  0xE2
+byte 1:  10 000010   continuation, next 6 bits                  =  0x82
+byte 2:  10 101100   continuation, low 6 bits                   =  0xAC
+```
+
+Those are the bytes every UTF-8 text has for the euro sign, and because a
+byte-aligned 8-bit field is the same byte in either order, `nbq_put_utf8_le`
+produces them too. Off alignment the two orders differ: after a 3-bit field
+holding 5, the same three bytes are `BC 50 55 80` MSB first and
+`15 17 64 05` LSB first, and each reads back only in its own order.
+
+The decoder accepts exactly the well-formed sequences of the Unicode
+standard (Table 3-7) and nothing else. `C0 80` is `NBQ_ERR_MALFORMED`, not
+another way to write U+0000; so is a surrogate `ED A0 80`, an `F5` lead
+byte, or a continuation byte where a lead byte should be. A sequence cut
+off by the end of the buffer, `E2 82` in 16 bits, is `NBQ_ERR_RANGE`: the
+bytes so far are valid and more data would finish them. Strings are the
+caller's loop; the API reference has the two usual shapes.
 
 ## 6. Bit runs
 
@@ -276,7 +309,7 @@ The checksum is CRC-64/XZ (ECMA-182 polynomial, reflected, init and final
 XOR all ones), the same one `xz` uses, and the implementation is verified
 against the published vector `CRC-64/XZ("123456789") == 995DC9BBDF1939FA`.
 It is computed bitwise with no lookup table, because a 2 KB table is a poor
-trade in a library whose whole freestanding build is under 5 KB.
+trade in a library whose whole freestanding build is about 7 KB.
 
 A CRC means the bytes are intact. It does not mean they are trustworthy:
 whoever can supply a file can supply a matching checksum. Detecting
@@ -286,9 +319,9 @@ tampering needs a signature.
 
 On a target without native 64-bit arithmetic, every `uint64_t` shift is a
 call into compiler support code, and a bit-stream walk is nothing but
-shifts. The `u32` functions are a separate path that touches no 64-bit
-value, and `nbq_get_parts` / `nbq_put_parts` handle widths up to 64 as a
-`{hi, lo}` pair of 32-bit halves:
+shifts. The `u32` functions are a separate path that assembles the value
+in 32-bit arithmetic, and `nbq_get_parts` / `nbq_put_parts` handle widths
+up to 64 as a `{hi, lo}` pair of 32-bit halves:
 
 ```c
 nbq_u64_parts p;
@@ -297,6 +330,14 @@ nbq_get_parts(buf, bit_len, bit_pos, 48, &p);   /* p.hi, p.lo */
 
 They produce the same bits as `nbq_get_u64`; the fuzz harness checks that
 all three paths agree on every read at every alignment.
+
+Positions are `uint64_t` throughout `nbitq.c`, but a field's loop never
+touches one. Each fixed-width function converts the position to a byte
+pointer and a bit index once, and the loop over the field's bits runs in
+`unsigned int`. Where even that one conversion is a cost, `nbitq32.c` is
+the u32 pair with `uint32_t` positions: a separate copy with no 64-bit type
+in it, held to the same bytes as `nbq_put_u32` by its own test, which also
+builds with SDCC for Z80, 8051 and STM8.
 
 ## Performance, and why it is bit-at-a-time
 

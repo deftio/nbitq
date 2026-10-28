@@ -29,28 +29,53 @@
 
 /* ── The single place a bit is addressed ─────────────────────────────────
  * MSB first: bit 0 is the most significant bit of byte 0. LSB first: bit 0
- * is the least significant. Everything else is built on these two functions;
+ * is the least significant. Everything else is built on these functions;
  * if they are right, the library is right.
+ *
+ * A bit is addressed as a byte pointer plus a small index, not as a 64-bit
+ * stream position. A fixed-width function does the 64-bit divide by eight
+ * once, with BYTE_AT and bit_in, and its loop then runs over `bit + i` in
+ * unsigned int; the index never exceeds 7 + 64. On an 8-bit or 16-bit CPU,
+ * where every 64-bit operation is a call into compiler support code, that
+ * halves the code of every fixed-width function.
  */
 
-static inline unsigned int bit_shift(uint64_t pos, nbq_bit_order order)
+#define BYTE_AT(buf, pos) ((buf) + (size_t)((pos) >> 3))
+
+static inline unsigned int bit_in(uint64_t pos)
 {
-    const unsigned int in_byte = (unsigned int)(pos & 7u);
+    return (unsigned int)(pos & 7u);
+}
+
+static inline unsigned int bit_shift(unsigned int bit, nbq_bit_order order)
+{
+    const unsigned int in_byte = bit & 7u;
     return (order == NBQ_LSB_FIRST) ? in_byte : 7u - in_byte;
 }
 
-static inline unsigned int bit_get(const uint8_t *buf, uint64_t pos, nbq_bit_order order)
+static inline unsigned int bit_get(const uint8_t *p, unsigned int bit, nbq_bit_order order)
 {
-    return (unsigned int)((buf[pos >> 3] >> bit_shift(pos, order)) & 1u);
+    return (unsigned int)((p[bit >> 3] >> bit_shift(bit, order)) & 1u);
 }
 
-static inline void bit_set(uint8_t *buf, uint64_t pos, unsigned int v, nbq_bit_order order)
+static inline void bit_set(uint8_t *p, unsigned int bit, unsigned int v, nbq_bit_order order)
 {
-    const uint8_t mask = (uint8_t)(1u << bit_shift(pos, order));
+    const uint8_t mask = (uint8_t)(1u << bit_shift(bit, order));
     if (v)
-        buf[pos >> 3] |= mask;
+        p[bit >> 3] |= mask;
     else
-        buf[pos >> 3] = (uint8_t)(buf[pos >> 3] & (uint8_t)~mask);
+        p[bit >> 3] = (uint8_t)(p[bit >> 3] & (uint8_t)~mask);
+}
+
+/* The same two addressed by stream position, for runs of any length. */
+static inline unsigned int bit_get_at(const uint8_t *buf, uint64_t pos, nbq_bit_order order)
+{
+    return bit_get(BYTE_AT(buf, pos), bit_in(pos), order);
+}
+
+static inline void bit_set_at(uint8_t *buf, uint64_t pos, unsigned int v, nbq_bit_order order)
+{
+    bit_set(BYTE_AT(buf, pos), bit_in(pos), v, order);
 }
 
 /* Would [pos, pos+n) fit inside `limit` bits? Written to be overflow-proof:
@@ -103,13 +128,16 @@ static nbq_result get_u64_o(const uint8_t *buf, uint64_t bit_len, uint64_t bit_p
     if (!in_range(bit_len, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    const uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     uint64_t v = 0;
     if (order == NBQ_LSB_FIRST) {
         for (unsigned int i = 0; i < n; i++)
-            v |= (uint64_t)bit_get(buf, bit_pos + i, order) << i;
+            v |= (uint64_t)bit_get(p, bit + i, order) << i;
     } else {
         for (unsigned int i = 0; i < n; i++)
-            v = (v << 1) | (uint64_t)bit_get(buf, bit_pos + i, order);
+            v = (v << 1) | (uint64_t)bit_get(p, bit + i, order);
     }
     *out = v;
     return NBQ_OK;
@@ -146,13 +174,16 @@ static nbq_result get_u32_o(const uint8_t *buf, uint64_t bit_len, uint64_t bit_p
     if (!in_range(bit_len, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    const uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     uint32_t v = 0;
     if (order == NBQ_LSB_FIRST) {
         for (unsigned int i = 0; i < n; i++)
-            v |= (uint32_t)bit_get(buf, bit_pos + i, order) << i;
+            v |= (uint32_t)bit_get(p, bit + i, order) << i;
     } else {
         for (unsigned int i = 0; i < n; i++)
-            v = (uint32_t)((v << 1) | (uint32_t)bit_get(buf, bit_pos + i, order));
+            v = (uint32_t)((v << 1) | (uint32_t)bit_get(p, bit + i, order));
     }
     *out = v;
     return NBQ_OK;
@@ -185,6 +216,9 @@ static nbq_result get_parts_o(const uint8_t *buf, uint64_t bit_len, uint64_t bit
     if (!in_range(bit_len, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    const uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     const unsigned int n_hi = (n > 32u) ? n - 32u : 0u;
     const unsigned int n_lo = n - n_hi;
     uint32_t hi = 0, lo = 0;
@@ -192,14 +226,14 @@ static nbq_result get_parts_o(const uint8_t *buf, uint64_t bit_len, uint64_t bit
 
     if (order == NBQ_LSB_FIRST) {
         for (i = 0; i < n_lo; i++)
-            lo |= (uint32_t)bit_get(buf, bit_pos + i, order) << i;
+            lo |= (uint32_t)bit_get(p, bit + i, order) << i;
         for (i = 0; i < n_hi; i++)
-            hi |= (uint32_t)bit_get(buf, bit_pos + n_lo + i, order) << i;
+            hi |= (uint32_t)bit_get(p, bit + n_lo + i, order) << i;
     } else {
         for (i = 0; i < n_hi; i++)
-            hi = (uint32_t)((hi << 1) | (uint32_t)bit_get(buf, bit_pos + i, order));
+            hi = (uint32_t)((hi << 1) | (uint32_t)bit_get(p, bit + i, order));
         for (i = 0; i < n_lo; i++)
-            lo = (uint32_t)((lo << 1) | (uint32_t)bit_get(buf, bit_pos + n_hi + i, order));
+            lo = (uint32_t)((lo << 1) | (uint32_t)bit_get(p, bit + n_hi + i, order));
     }
     out->hi = hi;
     out->lo = lo;
@@ -214,12 +248,15 @@ static nbq_result put_u64_o(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, un
     if (!in_range(bit_cap, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     if (order == NBQ_LSB_FIRST) {
         for (unsigned int i = 0; i < n; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value >> i) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value >> i) & 1u), order);
     } else {
         for (unsigned int i = 0; i < n; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value >> (n - 1u - i)) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value >> (n - 1u - i)) & 1u), order);
     }
     return NBQ_OK;
 }
@@ -243,12 +280,15 @@ static nbq_result put_u32_o(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, un
     if (!in_range(bit_cap, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     if (order == NBQ_LSB_FIRST) {
         for (unsigned int i = 0; i < n; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value >> i) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value >> i) & 1u), order);
     } else {
         for (unsigned int i = 0; i < n; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value >> (n - 1u - i)) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value >> (n - 1u - i)) & 1u), order);
     }
     return NBQ_OK;
 }
@@ -272,20 +312,23 @@ static nbq_result put_parts_o(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, 
     if (!in_range(bit_cap, bit_pos, n))
         return NBQ_ERR_RANGE;
 
+    uint8_t *p = BYTE_AT(buf, bit_pos);
+    const unsigned int bit = bit_in(bit_pos);
+
     const unsigned int n_hi = (n > 32u) ? n - 32u : 0u;
     const unsigned int n_lo = n - n_hi;
     unsigned int i;
 
     if (order == NBQ_LSB_FIRST) {
         for (i = 0; i < n_lo; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value.lo >> i) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value.lo >> i) & 1u), order);
         for (i = 0; i < n_hi; i++)
-            bit_set(buf, bit_pos + n_lo + i, (unsigned int)((value.hi >> i) & 1u), order);
+            bit_set(p, bit + n_lo + i, (unsigned int)((value.hi >> i) & 1u), order);
     } else {
         for (i = 0; i < n_hi; i++)
-            bit_set(buf, bit_pos + i, (unsigned int)((value.hi >> (n_hi - 1u - i)) & 1u), order);
+            bit_set(p, bit + i, (unsigned int)((value.hi >> (n_hi - 1u - i)) & 1u), order);
         for (i = 0; i < n_lo; i++)
-            bit_set(buf, bit_pos + n_hi + i, (unsigned int)((value.lo >> (n_lo - 1u - i)) & 1u),
+            bit_set(p, bit + n_hi + i, (unsigned int)((value.lo >> (n_lo - 1u - i)) & 1u),
                     order);
     }
     return NBQ_OK;
@@ -571,6 +614,150 @@ nbq_result nbq_put_varint_s_le(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * UTF-8 code points
+ * ════════════════════════════════════════════════════════════════════════
+ *
+ * Each byte of the encoding is an 8-bit field through put_u64_o and
+ * get_u64_o, so the order parameter does here exactly what it does
+ * everywhere else, and a byte-aligned sequence is plain UTF-8 in either
+ * order.
+ *
+ * The decoder is the well-formed byte sequence table of the Unicode standard
+ * (Table 3-7) written as code: the lead byte fixes the length, every
+ * continuation byte must be 10xxxxxx, and the assembled value must be a
+ * scalar value that needs exactly that many bytes. The last check is what
+ * refuses overlong forms, surrogates and anything past U+10FFFF.
+ */
+
+static int utf8_scalar(uint32_t cp)
+{
+    return cp <= NBQ_UTF8_MAX_CP && (cp < 0xD800u || cp > 0xDFFFu);
+}
+
+/* Bytes a scalar value takes. The caller has checked that it is one. */
+static unsigned int utf8_len(uint32_t cp)
+{
+    if (cp < 0x80u)
+        return 1u;
+    if (cp < 0x800u)
+        return 2u;
+    if (cp < 0x10000u)
+        return 3u;
+    return 4u;
+}
+
+unsigned int nbq_utf8_bits(uint32_t cp)
+{
+    return utf8_scalar(cp) ? utf8_len(cp) * 8u : 0u;
+}
+
+static nbq_result put_utf8_o(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp,
+                             uint64_t *next_pos, nbq_bit_order order)
+{
+    if (!buf || !utf8_scalar(cp))
+        return NBQ_ERR_PARAM;
+
+    /* Atomic: the whole encoding fits, or nothing is written. */
+    const unsigned int len = utf8_len(cp);
+    if (!in_range(bit_cap, bit_pos, (uint64_t)len * 8u))
+        return NBQ_ERR_RANGE;
+
+    /* The lead byte opens with len-1 ones and a zero (none for one byte),
+       then the top bits of the value; each continuation byte is 10 and the
+       next six bits down. */
+    const uint32_t lead = (len == 1u) ? 0u : ((0xFF00u >> len) & 0xFFu);
+    unsigned int shift = (len - 1u) * 6u;
+    uint64_t pos = bit_pos;
+    (void)put_u64_o(buf, bit_cap, pos, 8u, lead | (cp >> shift), order); /* range pre-checked */
+    pos += 8u;
+    while (shift > 0u) {
+        shift -= 6u;
+        (void)put_u64_o(buf, bit_cap, pos, 8u, 0x80u | ((cp >> shift) & 0x3Fu), order);
+        pos += 8u;
+    }
+    if (next_pos)
+        *next_pos = pos;
+    return NBQ_OK;
+}
+
+static nbq_result get_utf8_o(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out,
+                             uint64_t *next_pos, nbq_bit_order order)
+{
+    if (!buf || !out)
+        return NBQ_ERR_PARAM;
+
+    uint64_t byte, pos = bit_pos;
+    nbq_result rc = get_u64_o(buf, bit_len, pos, 8u, &byte, order);
+    if (rc != NBQ_OK)
+        return rc;
+    pos += 8u;
+
+    /* The lead byte fixes the length. 80..C1 is a stray continuation byte or
+       the lead of an overlong two-byte form; F5..FF would reach past
+       U+10FFFF. */
+    unsigned int len;
+    uint32_t cp;
+    if (byte < 0x80u) {
+        len = 1u;
+        cp = (uint32_t)byte;
+    } else if (byte < 0xC2u) {
+        return NBQ_ERR_MALFORMED;
+    } else if (byte < 0xE0u) {
+        len = 2u;
+        cp = (uint32_t)byte & 0x1Fu;
+    } else if (byte < 0xF0u) {
+        len = 3u;
+        cp = (uint32_t)byte & 0x0Fu;
+    } else if (byte < 0xF5u) {
+        len = 4u;
+        cp = (uint32_t)byte & 0x07u;
+    } else {
+        return NBQ_ERR_MALFORMED;
+    }
+
+    for (unsigned int i = 1u; i < len; i++) {
+        rc = get_u64_o(buf, bit_len, pos, 8u, &byte, order);
+        if (rc != NBQ_OK)
+            return rc; /* cut off by the end of the buffer; nothing stored */
+        if ((byte & 0xC0u) != 0x80u)
+            return NBQ_ERR_MALFORMED;
+        cp = (cp << 6) | ((uint32_t)byte & 0x3Fu);
+        pos += 8u;
+    }
+
+    /* Overlong (a value given more bytes than it needs), a surrogate, or
+       past U+10FFFF. */
+    if (!utf8_scalar(cp) || utf8_len(cp) != len)
+        return NBQ_ERR_MALFORMED;
+
+    *out = cp;
+    if (next_pos)
+        *next_pos = pos;
+    return NBQ_OK;
+}
+
+nbq_result nbq_get_utf8(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out,
+                        uint64_t *next_pos)
+{
+    return get_utf8_o(buf, bit_len, bit_pos, out, next_pos, NBQ_MSB_FIRST);
+}
+nbq_result nbq_put_utf8(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp,
+                        uint64_t *next_pos)
+{
+    return put_utf8_o(buf, bit_cap, bit_pos, cp, next_pos, NBQ_MSB_FIRST);
+}
+nbq_result nbq_get_utf8_le(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out,
+                           uint64_t *next_pos)
+{
+    return get_utf8_o(buf, bit_len, bit_pos, out, next_pos, NBQ_LSB_FIRST);
+}
+nbq_result nbq_put_utf8_le(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp,
+                           uint64_t *next_pos)
+{
+    return put_utf8_o(buf, bit_cap, bit_pos, cp, next_pos, NBQ_LSB_FIRST);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * Bit arrays
  * ════════════════════════════════════════════════════════════════════════
  *
@@ -595,10 +782,10 @@ static nbq_result copy_bits_o(const uint8_t *src, uint64_t src_bits, uint64_t sr
        bits before reading them when dst is ahead of src. */
     if (src == dst && dst_pos > src_pos && dst_pos < src_pos + n) {
         for (uint64_t i = n; i-- > 0;)
-            bit_set(dst, dst_pos + i, bit_get(src, src_pos + i, order), order);
+            bit_set_at(dst, dst_pos + i, bit_get_at(src, src_pos + i, order), order);
     } else {
         for (uint64_t i = 0; i < n; i++)
-            bit_set(dst, dst_pos + i, bit_get(src, src_pos + i, order), order);
+            bit_set_at(dst, dst_pos + i, bit_get_at(src, src_pos + i, order), order);
     }
     return NBQ_OK;
 }
@@ -614,7 +801,7 @@ static nbq_result fill_bits_o(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, 
         return NBQ_ERR_RANGE;
 
     for (uint64_t i = 0; i < n; i++)
-        bit_set(buf, bit_pos + i, value ? 1u : 0u, order);
+        bit_set_at(buf, bit_pos + i, value ? 1u : 0u, order);
     return NBQ_OK;
 }
 
@@ -628,8 +815,8 @@ static nbq_result compare_bits_o(const uint8_t *a, uint64_t a_bits, uint64_t a_p
         return NBQ_ERR_RANGE;
 
     for (uint64_t i = 0; i < n; i++) {
-        const unsigned int x = bit_get(a, a_pos + i, order);
-        const unsigned int y = bit_get(b, b_pos + i, order);
+        const unsigned int x = bit_get_at(a, a_pos + i, order);
+        const unsigned int y = bit_get_at(b, b_pos + i, order);
         if (x != y) {
             *out = (x > y) ? 1 : -1;
             return NBQ_OK;
@@ -649,7 +836,7 @@ static nbq_result popcount_bits_o(const uint8_t *buf, uint64_t bit_len, uint64_t
 
     uint64_t c = 0;
     for (uint64_t i = 0; i < n; i++)
-        c += bit_get(buf, bit_pos + i, order);
+        c += bit_get_at(buf, bit_pos + i, order);
     *out = c;
     return NBQ_OK;
 }
@@ -867,7 +1054,7 @@ nbq_result nbq_reader_align(nbq_reader *r, unsigned int n)
         return NBQ_ERR_RANGE;
     /* Padding must be zero, or the stream is not what the writer produced. */
     for (uint64_t i = 0; i < pad; i++)
-        if (bit_get(r->buf, r->pos + i, r->order))
+        if (bit_get_at(r->buf, r->pos + i, r->order))
             return NBQ_ERR_MALFORMED;
     r->pos += pad;
     return NBQ_OK;
@@ -930,6 +1117,17 @@ nbq_result nbq_read_varint_s(nbq_reader *r, unsigned int base, int64_t *out)
     return rc;
 }
 
+nbq_result nbq_read_utf8(nbq_reader *r, uint32_t *out)
+{
+    if (!r)
+        return NBQ_ERR_PARAM;
+    uint64_t next = 0;
+    nbq_result rc = get_utf8_o(r->buf, r->bits, r->pos, out, &next, r->order);
+    if (rc == NBQ_OK)
+        r->pos = next;
+    return rc;
+}
+
 nbq_result nbq_read_bits(nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos,
                          uint64_t n)
 {
@@ -986,6 +1184,23 @@ nbq_result nbq_write_varint_s(nbq_writer *w, unsigned int base, int64_t value)
 {
     const uint64_t zz = ((uint64_t)value << 1) ^ (uint64_t)(value >> 63);
     return nbq_write_varint(w, base, zz);
+}
+
+nbq_result nbq_write_utf8(nbq_writer *w, uint32_t cp)
+{
+    if (!w)
+        return NBQ_ERR_PARAM;
+    const unsigned int need = nbq_utf8_bits(cp);
+    if (need == 0u)
+        return NBQ_ERR_PARAM;
+    nbq_result rc = writer_reserve(w, need);
+    if (rc != NBQ_OK)
+        return rc;
+    uint64_t next = 0;
+    rc = put_utf8_o(w->buf, w->cap, w->pos, cp, &next, w->order);
+    if (rc == NBQ_OK)
+        w->pos = next;
+    return rc;
 }
 
 nbq_result nbq_write_bits(nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos,

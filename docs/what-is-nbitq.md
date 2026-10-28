@@ -3,7 +3,7 @@
 nbitq packs and unpacks n-bit integers in a bit stream: values of any width
 from 1 to 64 bits, written back to back or at any bit position in a byte
 buffer, and read back as native integers. Two C99 files, no dependencies,
-about 5.9 KB compiled.
+about 6.9 KB compiled.
 
 ```c
 uint8_t buf[64] = {0};
@@ -65,9 +65,10 @@ offsets and widths.
 
 **Firmware.** Nothing in the core allocates. The reader accepts a const
 buffer in ROM. With one define the library drops every hosted header and
-builds `-ffreestanding` with no libc, in under 5 KB of `.text` on a
-Cortex-M3. A separate code path uses no 64-bit arithmetic, for targets where
-a `uint64_t` shift is a library call.
+builds `-ffreestanding` with no libc, in about 7 KB of `.text` on a
+Cortex-M4. The `u32` functions keep the value in 32-bit arithmetic, and
+`nbitq32.c`, a separate copy of that pair with 32-bit positions, is under
+400 bytes there and builds on compilers with no 64-bit type at all.
 
 **Portable output.** The bit order is fixed and documented. Varints are
 canonical, so one value has one encoding. Two programs built with different
@@ -96,12 +97,14 @@ needs next:
 | A field at a known position | `nbq_get_u32` / `nbq_put_u32`, and 64-bit and signed variants |
 | A sequence of fields | `nbq_reader` / `nbq_writer` cursors, with seek and align |
 | A small number in few bits | varints at any group width from 2 to 64 bits; base 8 is LEB128 exactly |
+| A Unicode code point | `nbq_get_utf8` / `nbq_put_utf8`: one code point as 1 to 4 UTF-8 bytes, well-formed sequences only |
 | A span of bits moved elsewhere | `nbq_copy_bits` from any offset to any offset, overlap-safe |
 | Compare, fill, count | `nbq_compare_bits`, `nbq_fill_bits`, `nbq_popcount_bits` |
 | A float or double | `nbq_get_f32` / `nbq_put_f32`, `nbq_get_f64` / `nbq_put_f64`: IEEE-754 bit patterns, header-only |
 | A stream in the other bit order | `_le` twins of every indexed function and `_le` cursor initialisers; MSB first is the default, LSB first is DEFLATE's |
 | From C++ | `nbitq.hpp`: `nbq::Reader`, `nbq::Writer`, `nbq::OwningWriter`; each method one call into the C library |
 | 64-bit values on a 32-bit CPU | `nbq_get_parts` / `nbq_put_parts`, using only 32-bit arithmetic |
+| A field on an 8-bit or 16-bit CPU | `nbitq32.h` / `nbitq32.c`: `nbq32_get` / `nbq32_put` with 32-bit positions, no 64-bit type, builds with SDCC |
 | A bit run stored in a file | the optional `.nbq` container: length, type string, CRC-64 |
 
 ## Fixed conventions

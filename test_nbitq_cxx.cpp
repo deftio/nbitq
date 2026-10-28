@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "nbitq.hpp"
+#include "nbitq32.h"
 #include "nbitq_container.h"
 
 static int checks = 0, failures = 0;
@@ -100,6 +101,7 @@ static uint64_t write_everything_in_c(uint8_t *buf, std::size_t len)
     nbq_write_parts(&w, 33, p);
     nbq_write_varint(&w, 8, 300);
     nbq_write_varint_s(&w, 5, -1);
+    nbq_write_utf8(&w, 0x20ACu);
     nbq_writer_align(&w, 8);
     nbq_write_f32(&w, 1.5f);
     nbq_write_f64(&w, -2.25);
@@ -132,6 +134,7 @@ static void test_reader()
     CHECK(r.parts(33, &q) == NBQ_OK && q.hi == 0x1u && q.lo == 0x80000000u, "parts");
     CHECK(r.varint(8, &u64) == NBQ_OK && u64 == 300, "varint");
     CHECK(r.varint_s(5, &s64) == NBQ_OK && s64 == -1, "varint_s");
+    CHECK(r.utf8(&u32) == NBQ_OK && u32 == 0x20ACu, "utf8");
     CHECK(r.align(8) == NBQ_OK && r.pos() % 8 == 0, "align");
     CHECK(r.f32(&f) == NBQ_OK && f == 1.5f, "f32");
     CHECK(r.f64(&d) == NBQ_OK && d == -2.25, "f64");
@@ -192,6 +195,7 @@ static void test_writer()
     CHECK(w.parts(33, p) == NBQ_OK, "parts");
     CHECK(w.varint(8, 300) == NBQ_OK, "varint");
     CHECK(w.varint_s(5, -1) == NBQ_OK, "varint_s");
+    CHECK(w.utf8(0x20ACu) == NBQ_OK, "utf8");
     CHECK(w.align(8) == NBQ_OK, "align");
     CHECK(w.f32(1.5f) == NBQ_OK, "f32");
     CHECK(w.f64(-2.25) == NBQ_OK, "f64");
@@ -279,9 +283,24 @@ static void test_owning_writer()
 }
 #endif
 
+// nbitq32.h is extern "C" as well, and agrees with the core from here too.
+static void test_nbitq32_links()
+{
+    uint8_t bits[4] = {0};
+    CHECK(nbq32_put(bits, 32, 3, 12, 3000) == NBQ32_OK, "nbq32_put");
+    uint32_t a = 0, b = 1;
+    CHECK(nbq32_get(bits, 32, 3, 12, &a) == NBQ32_OK && a == 3000, "nbq32_get");
+    CHECK(nbq_get_u32(bits, 32, 3, 12, &b) == NBQ_OK && b == a, "same field through nbitq");
+    CHECK(nbq32_put_le(bits, 32, 3, 12, 3000) == NBQ32_OK, "nbq32_put_le");
+    CHECK(nbq32_get_le(bits, 32, 3, 12, &a) == NBQ32_OK && a == 3000, "nbq32_get_le");
+    CHECK(nbq32_get_be(bits, 32, 0, 1, &a) == NBQ32_OK, "nbq32_get_be");
+    CHECK(nbq32_put_be(bits, 32, 0, 1, 1) == NBQ32_OK, "nbq32_put_be");
+}
+
 int main()
 {
     test_c_headers_link();
+    test_nbitq32_links();
     test_header_inlines();
     test_reader();
     test_writer();

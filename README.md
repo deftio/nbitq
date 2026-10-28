@@ -22,7 +22,11 @@ uint32_t v;
 nbq_get_u32(buf, sizeof(buf) * 8, 13, 12, &v);   /* v == 3000 */
 ```
 
-Two files, C99, no dependencies, about 5.9 KB compiled.
+Two files, C99, no dependencies, about 6.9 KB compiled. Values are 1 to 64
+bits wide and positions are 64-bit, so a buffer of any size is addressed
+directly. The suite checks every width at every offset in both bit orders
+against a model, under sanitizers and a fuzzer, with 100% line coverage as
+a CI gate; see [Testing](#testing).
 
 ## Quickstart
 
@@ -117,7 +121,7 @@ or
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.2.0)
+    GIT_TAG        v0.2.1)
 FetchContent_MakeAvailable(nbitq)
 ```
 </details>
@@ -283,6 +287,26 @@ it, so a corpus can be measured at several bases. Signed varints
 (`nbq_put_varint_s`, `nbq_get_varint_s`) use zigzag, so −1 costs the same
 as 0.
 
+### UTF-8
+
+One Unicode code point per call, as the 1 to 4 bytes of its UTF-8
+encoding, each byte an 8-bit field in the stream's order:
+
+```c
+nbq_put_utf8(buf, bit_cap, bit_pos, 0x20AC, &next_pos);   /* E2 82 AC when aligned */
+nbq_get_utf8(buf, bit_len, bit_pos, &cp, &next_pos);      /* cp == 0x20AC */
+nbq_write_utf8(&w, cp);                                   /* cursor forms */
+nbq_read_utf8(&r, &cp);
+nbq_utf8_bits(cp);                                        /* 8, 16, 24 or 32 */
+```
+
+The decoder accepts exactly the well-formed sequences of the Unicode
+standard: no overlong forms, no surrogates, nothing past U+10FFFF, each
+refused as `NBQ_ERR_MALFORMED`. A sequence cut off by the end of the
+buffer is `NBQ_ERR_RANGE`, so a parser can tell "more data" from "corrupt".
+Strings are a layer above nbitq: a loop over these calls, with a length or
+a terminator chosen by the format.
+
 ### Bit runs
 
 Move a span of bits from any offset to any other offset:
@@ -377,16 +401,85 @@ Define `NBQ_NO_MALLOC` and the one allocating function disappears, along with
 every `#include` of a hosted header — the library then builds
 `-ffreestanding` with no libc at all.
 
-| target | `.text` |
-|---|---:|
-| **Cortex-M3/M4/M7** (Thumb-2) | **6,555 bytes** |
-| Cortex-M0 (Thumb-1) | 7,407 |
-| ARM (v7-A) | 11,025 |
-| AArch64 | 5,477 |
-| x86-64 | 5,940 |
+The core on every toolchain `tools/sizes.sh` drives, as bytes of `.text`
+at `-Os` with `NBQ_NO_MALLOC` and `-ffreestanding`. The `core` column is
+the whole library in one object. The `u32 cursor only` column is what a
+program that calls only `nbq_reader_init`, `nbq_writer_init`,
+`nbq_read_u32` and `nbq_write_u32` links in, with function sections
+garbage-collected from those four roots. The `nbitq32` column is
+`nbitq32.c` alone, the separate 32-bit-position pair described in
+[nbitq32](#nbitq32-the-u32-pair-with-32-bit-positions) below.
+
+<!-- crossbuild-sizes -->
+| CPU | bits | compiler | core | u32 cursor only | nbitq32 |
+|---|---:|---|---:|---:|---:|
+| AVR ATtiny85 | 8 | avr-gcc 5.4.0 | 26,373 | 1,972 | 1,032 |
+| AVR ATmega328P | 8 | avr-gcc 5.4.0 | 26,989 | 2,014 | 1,032 |
+| 8051 | 8 | sdcc -mmcs51 4.0.0 | n/a | n/a | 1,353 |
+| STM8 | 8 | sdcc -mstm8 4.0.0 | n/a | n/a | 750 |
+| Z80 | 8 | sdcc -mz80 4.0.0 | n/a | n/a | 1,404 |
+| MSP430 G2553 | 16 | msp430-gcc 4.6.3 | 16,784 | 1,412 | 756 |
+| Cortex-M4 (Thumb-2) | 32 | arm-none-eabi-gcc 10.3.1 | 7,281 | 594 | 354 |
+| Xtensa LX7 (ESP32-S3) | 32 | xtensa-esp32s3-elf-gcc 15.2.0 | 7,589 | 648 | 416 |
+| Cortex-M0 (Thumb-1) | 32 | arm-none-eabi-gcc 10.3.1 | 7,609 | 636 | 356 |
+| Xtensa LX6 (ESP32) | 32 | xtensa-esp32-elf-gcc 15.2.0 | 7,649 | 646 | 400 |
+| RISC-V rv32imac | 32 | riscv64-unknown-elf-gcc 10.2.0 | 8,007 | 760 | 382 |
+| Xtensa LX106 (ESP8266) | 32 | xtensa-lx106-elf-gcc 10.3.0 | 9,321 | 803 | 447 |
+| m68k | 32 | m68k-linux-gnu-gcc 11.4.0 | 9,955 | 912 | 484 |
+| ARM v7-A (A32) | 32 | arm-none-eabi-gcc 10.3.1 | 10,889 | 932 | 596 |
+| MIPS32 (little-endian) | 32 | mipsel-linux-gnu-gcc 10.3.0 | 14,400 | 1,164 | 624 |
+| PowerPC | 32 | powerpc-linux-gnu-gcc 11.4.0 | 15,229 | 1,384 | 684 |
+| x86-32 | 32 | gcc 11.4.0 | 15,639 | 1,306 | 756 |
+| RISC-V rv64gc | 64 | riscv64-linux-gnu-gcc 11.4.0 | 5,876 | 660 | 386 |
+| x86-64 | 64 | clang 14.0.0 | 6,886 | 583 | 374 |
+| Apple Silicon (arm64 macOS) | 64 | Apple clang 21.0.0 | 7,072 | 672 | 428 |
+| AArch64 | 64 | aarch64-linux-gnu-gcc 11.4.0 | 9,527 | 1,056 | 664 |
+| x86-64 | 64 | gcc 11.4.0 | 9,535 | 1,039 | 710 |
+| MIPS64 (little-endian) | 64 | mips64el-linux-gnuabi64-gcc 10.3.0 | 10,112 | 1,024 | 624 |
+<!-- crossbuild-sizes -->
+
+Measured with the compilers Ubuntu 22.04 packages, in the Docker image
+`tools/Dockerfile.crossbuild`, plus Apple clang on an arm64 Mac; `make
+crossbuild` reproduces the CSVs and `make sizes-table` rewrites this table
+from them. The library leans on 64-bit arithmetic, which an 8-bit or
+16-bit CPU does in software, so the whole core is large there while the
+u32 path stays small. The SDCC rows have no core; the next section says
+why. `make targets` prints Apple clang `-Oz` numbers for a quicker check:
+7,283 bytes on Cortex-M4, 8,235 on Cortex-M0, 6,549 on AArch64, 7,050 on
+x86-64.
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state, so it
-is reentrant per instance. Reproduce with `make targets`.
+is reentrant per instance.
+
+## nbitq32: the u32 pair with 32-bit positions
+
+Everything above is the library: `nbitq.h` and `nbitq.c`, with 64-bit
+positions and values, for any CPU that has a 64-bit type, which includes
+every 32-bit microcontroller. This section is for the targets that do not.
+
+On an 8-bit or 16-bit CPU every 64-bit operation is a call into compiler
+support code, and the position arithmetic costs more than the value
+arithmetic. SDCC, the usual compiler for Z80, 8051 and STM8, has no 64-bit
+type at all and cannot compile `nbitq.c`. For those targets `nbitq32.h` and
+`nbitq32.c` are `nbq_get_u32` and `nbq_put_u32` with `uint32_t` positions
+and lengths, and nothing else:
+
+```c
+#include "nbitq32.h"
+
+uint8_t buf[4] = {0};
+nbq32_put(buf, 32, 5, 12, 3000);       /* uint32_t capacity and position */
+uint32_t v;
+nbq32_get(buf, 32, 5, 12, &v);         /* v == 3000; same bits as nbq_get_u32 */
+```
+
+Two functions and their `_le` twins, `_be` aliases, the same bit numbering,
+the same refusals and the same result-code values as `nbq_result`. No
+cursor: `pos += n` is one. The two files do not include `nbitq.h`, so they
+are copied alone, and `test_nbitq32.c` checks that they write the bytes
+`nbq_put_u32` writes for every width and offset in both orders. In the
+table above it is 354 bytes on Cortex-M4, 1,032 on AVR, and with SDCC
+1,404 on Z80, 1,353 on 8051 and 750 on STM8.
 
 ## Optional: storing a bit run in a file
 
@@ -483,8 +576,17 @@ overflows.
 
 The fuzz harness checks properties, not just absence of crashes: anything
 that decodes must re-encode to identical bits; the 64-bit, 32-bit and hi/lo
-paths must agree read-for-read; a failed read must leave the cursor
+paths, and `nbitq32`, must agree read-for-read; a failed read must leave the cursor
 untouched; a copied bit run must compare equal to its source.
+
+UTF-8 is tested against the Unicode standard's table of well-formed byte
+sequences (Table 3-7), written into the suite as a predicate: every
+two-byte sequence at every start offset, every three-byte sequence with a
+three-byte lead, and the boundary bytes of every four-byte sequence must
+decode exactly when the table says they are well-formed, to the table's
+value, and re-encode to the same bytes. Every scalar value from U+0000 to
+U+10FFFF is encoded and decoded, and every length class at every start
+offset within a byte in both orders.
 
 Bit order is tested against a model, not against itself. The suite expands
 a buffer into one character per bit in stream order and reads members from
@@ -494,13 +596,14 @@ then tied to each other by a mirror identity, and the LSB-first path to the
 outside world by raw DEFLATE blocks that zlib produced, which nbitq reads
 field by field and writes back byte for byte.
 
-Measured: 228,031 core checks, 2,080 container checks, 288 checks of the C++
-wrapper, and 2,901,892 libFuzzer runs, all under AddressSanitizer and
+Measured: 9,777,588 core checks, 2,080 container checks, 207,619 checks of
+`nbitq32` against the core, 297 checks of the C++ wrapper, and 1,290,568
+libFuzzer runs in 60 seconds, all under AddressSanitizer and
 UndefinedBehaviorSanitizer, all clean.
 
 Line coverage is a gate, not a report. `make coverage` builds the library
-once with gcov instrumentation, runs all four test binaries against it and
-fails unless every line of `nbitq.c`, `nbitq_container.c`, `nbitq.h` and
+once with gcov instrumentation, runs all five test binaries against it and
+fails unless every line of `nbitq.c`, `nbitq_container.c`, `nbitq32.c`, `nbitq.h` and
 `nbitq.hpp` ran. Two lines are excluded, both guards that only a 32-bit
 `size_t` can reach, and each says so where it stands. CI runs the gate with
 gcc and gcov on Linux and publishes the number as the badge at the top of

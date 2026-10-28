@@ -75,12 +75,13 @@ extern "C" {
 
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 2
-#define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.2.0"
+#define NBQ_VERSION_PATCH 1
+#define NBQ_VERSION_STRING "0.2.1"
 
 /** The three parts packed as 0x00MMmmpp, so versions compare as integers:
  *  `#if NBQ_VERSION >= 0x000200` */
-#define NBQ_VERSION ((NBQ_VERSION_MAJOR << 16) | (NBQ_VERSION_MINOR << 8) | NBQ_VERSION_PATCH)
+
+#define NBQ_VERSION (NBQ_VERSION_MAJOR * 0x10000UL + NBQ_VERSION_MINOR * 0x100UL + NBQ_VERSION_PATCH)
 
 /** The version of the library that was compiled and linked, which is not
  *  always the version of the header a caller included. Both are constants
@@ -98,7 +99,7 @@ typedef enum {
     NBQ_ERR_PARAM = -1,    /**< null pointer, or a width/base out of range */
     NBQ_ERR_RANGE = -2,    /**< the operation would cross the end of the buffer */
     NBQ_ERR_OVERFLOW = -3, /**< value does not fit the destination type */
-    NBQ_ERR_MALFORMED = -4,/**< varint overlong, or an impossible encoding */
+    NBQ_ERR_MALFORMED = -4,/**< varint overlong, UTF-8 not well-formed, or an impossible encoding */
     NBQ_ERR_ALLOC = -5     /**< only from nbq_writer_init_alloc / grow */
 } nbq_result;
 
@@ -162,17 +163,20 @@ nbq_result nbq_get_s64(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, u
                        int64_t *out);
 
 /**
- * Read @p n bits (1..32) as unsigned, using no 64-bit arithmetic.
+ * Read @p n bits (1..32) as unsigned, assembling the value in 32-bit
+ * arithmetic.
  *
  * On a target without native 64-bit support every `uint64_t` shift is a
- * compiler library call, and a bit-stream walk is nothing but shifts. This
- * is not a convenience wrapper over nbq_get_u64 -- it is a separate path
- * that produces identical bits.
+ * compiler library call. This is not a convenience wrapper over nbq_get_u64
+ * but a separate path that produces identical bits with a 32-bit
+ * accumulator. The position is still 64-bit, converted once per call; a
+ * target that wants no 64-bit type at all has nbitq32.h, the same pair with
+ * 32-bit positions.
  */
 nbq_result nbq_get_u32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned int n,
                        uint32_t *out);
 
-/** Read @p n bits (1..32), sign-extended. No 64-bit arithmetic. */
+/** Read @p n bits (1..32), sign-extended, with a 32-bit accumulator. */
 nbq_result nbq_get_s32(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, unsigned int n,
                        int32_t *out);
 
@@ -195,11 +199,11 @@ nbq_result nbq_put_u64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigne
 nbq_result nbq_put_s64(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned int n,
                        int64_t value);
 
-/** Write @p n bits (1..32) using no 64-bit arithmetic. */
+/** Write @p n bits (1..32) from a 32-bit value; see nbq_get_u32. */
 nbq_result nbq_put_u32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned int n,
                        uint32_t value);
 
-/** Write the low @p n bits (1..32) of a signed value, no 64-bit arithmetic. */
+/** Write the low @p n bits (1..32) of a signed value, 32-bit arithmetic. */
 nbq_result nbq_put_s32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigned int n,
                        int32_t value);
 
@@ -393,6 +397,55 @@ unsigned int nbq_varint_bits(uint64_t value, unsigned int base);
  *  the wrong number. */
 unsigned int nbq_varint_bits_s(int64_t value, unsigned int base);
 
+/* ── UTF-8 code points ───────────────────────────────────────────────────
+ *
+ * One code point per call, as the 1 to 4 bytes of its UTF-8 encoding, each
+ * byte an 8-bit field in the stream's order. At a byte-aligned position the
+ * bytes are plain UTF-8 in either order; elsewhere they are 8-bit fields
+ * that only a reader using the same order gets back as UTF-8.
+ *
+ * A code point is an integer and UTF-8 is a self-delimiting encoding of it,
+ * which puts it beside the varints: the lead byte fixes the width, and the
+ * encoding is canonical. Strings are a layer above this library: a loop
+ * over these calls, with a length or a terminator that the caller's format
+ * chooses.
+ *
+ * The decoder accepts exactly the well-formed sequences of the Unicode
+ * standard (Table 3-7): no overlong forms, no surrogates (U+D800..U+DFFF),
+ * nothing above U+10FFFF. Anything else is NBQ_ERR_MALFORMED, which rules
+ * out modified UTF-8 (C0 80 for U+0000) and CESU-8. The encoder refuses a
+ * surrogate or a value above U+10FFFF as NBQ_ERR_PARAM. A sequence cut off
+ * by the end of the buffer is NBQ_ERR_RANGE, so a caller can tell "more
+ * data needed" from "corrupt".
+ */
+
+/** Largest code point. */
+#define NBQ_UTF8_MAX_CP 0x10FFFFu
+
+/** Read one UTF-8 code point at @p bit_pos. @p next_pos, if non-NULL,
+ *  receives the position just past it: 8, 16, 24 or 32 bits on. */
+nbq_result nbq_get_utf8(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out,
+                        uint64_t *next_pos);
+
+/** Write @p cp, a scalar value (not a surrogate, at most U+10FFFF), as
+ *  UTF-8 at @p bit_pos. Checks that the whole encoding fits before writing
+ *  any of it. */
+nbq_result nbq_put_utf8(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp,
+                        uint64_t *next_pos);
+
+/* The same two, LSB first. */
+nbq_result nbq_get_utf8_le(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out,
+                           uint64_t *next_pos);
+nbq_result nbq_put_utf8_le(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp,
+                           uint64_t *next_pos);
+
+#define nbq_get_utf8_be nbq_get_utf8
+#define nbq_put_utf8_be nbq_put_utf8
+
+/** Bits @p cp occupies as UTF-8: 8, 16, 24 or 32. 0 if @p cp is not a
+ *  scalar value. The same in both orders. */
+unsigned int nbq_utf8_bits(uint32_t cp);
+
 /* ── Bit arrays ──────────────────────────────────────────────────────────
  *
  * The operation most bit libraries leave out: move a run of bits from any bit
@@ -527,6 +580,7 @@ nbq_result nbq_read_s32(nbq_reader *r, unsigned int n, int32_t *out);
 nbq_result nbq_read_parts(nbq_reader *r, unsigned int n, nbq_u64_parts *out);
 nbq_result nbq_read_varint(nbq_reader *r, unsigned int base, uint64_t *out);
 nbq_result nbq_read_varint_s(nbq_reader *r, unsigned int base, int64_t *out);
+nbq_result nbq_read_utf8(nbq_reader *r, uint32_t *out);
 nbq_result nbq_read_bits(nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos,
                          uint64_t n);
 
@@ -538,6 +592,7 @@ nbq_result nbq_write_s32(nbq_writer *w, unsigned int n, int32_t value);
 nbq_result nbq_write_parts(nbq_writer *w, unsigned int n, nbq_u64_parts value);
 nbq_result nbq_write_varint(nbq_writer *w, unsigned int base, uint64_t value);
 nbq_result nbq_write_varint_s(nbq_writer *w, unsigned int base, int64_t value);
+nbq_result nbq_write_utf8(nbq_writer *w, uint32_t cp);
 nbq_result nbq_write_bits(nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos,
                           uint64_t n);
 

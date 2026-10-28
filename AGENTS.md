@@ -49,6 +49,17 @@ Those projects depend on the fixed conventions below. Do not change them.
   plus one continuation bit, least-significant group first. **Base 8 is
   LEB128 byte for byte.** Encodings are canonical; an overlong varint is
   `NBQ_ERR_MALFORMED`. Signed varints use zigzag.
+- UTF-8 is one code point per call, `uint32_t` in and out, as 1 to 4
+  bytes each written as an 8-bit field in the stream's order. The decoder
+  accepts exactly the well-formed sequences of Unicode Table 3-7 and
+  returns `NBQ_ERR_MALFORMED` for the rest; a sequence the buffer ends in
+  the middle of is `NBQ_ERR_RANGE`. The encoder refuses surrogates and
+  values above U+10FFFF as `NBQ_ERR_PARAM`. No string functions: strings
+  are a layer above nbitq.
+- nbitq32 (`nbq32_get` / `nbq32_put` in `nbitq32.h` / `nbitq32.c`) is
+  `nbq_get_u32` / `nbq_put_u32` with `uint32_t` positions and lengths. Same
+  bit numbering, same result-code values, same refusals; it must write the
+  bytes `nbq_put_u32` writes, and `test_nbitq32.c` checks that it does.
 - Floats are stored as their IEEE-754 bit pattern, big-endian, via
   `nbq_put_f32` / `nbq_put_f64` and the cursor forms. The library does no
   floating-point arithmetic. NaN payloads, signed zero and denormals
@@ -90,10 +101,15 @@ Optional pieces:
   when vendored. `FetchContent` with `GIT_TAG vX.Y.Z` also works.
 - Freestanding: define `NBQ_NO_MALLOC`. The growing writer disappears
   and the core includes no hosted header. It builds with
-  `-ffreestanding -nostdinc`. Core is about 5.9 KB of `.text` at `-Oz`
-  on Cortex-M.
+  `-ffreestanding -nostdinc`. Core is about 7.3 KB of `.text` at `-Oz`
+  on Cortex-M4 with clang and at `-Os` with gcc; the README has the table
+  for every toolchain, with columns for the u32 cursor subset and nbitq32.
 - 32-bit targets: use the `u32` functions and `nbq_get_parts` /
   `nbq_put_parts` (a `{hi, lo}` pair) to avoid 64-bit shifts.
+- 8-bit and 16-bit targets, or a compiler with no 64-bit type (SDCC):
+  `nbitq32.h` / `nbitq32.c`, the u32 pair with `uint32_t` positions
+  (`nbq32_get` / `nbq32_put`, `_le` twins). A separate copy with no
+  dependency on `nbitq.h`; copy those two files alone.
 
 Things nbitq does not do, on purpose: insert or delete bits (use
 `nbq_copy_bits` to shift the tail; the recipe is in
@@ -124,11 +140,14 @@ nbq_get_u32(buf, 24, 5, 12, &offset); /* offset == 3000 */
 | `nbitq.h`, `nbitq.c` | the library |
 | `nbitq.hpp` | header-only C++ wrapper over the cursor API; forwards, adds nothing |
 | `nbitq_container.h`, `nbitq_container.c` | optional `.nbq` container and CRC-64 |
+| `nbitq32.h`, `nbitq32.c` | the u32 pair with 32-bit positions; a separate copy with no 64-bit type, builds with SDCC |
 | `test_nbitq.c`, `test_nbitq_container.c` | exhaustive tests (every width, base, offset) |
+| `test_nbitq32.c` | nbitq32 against nbitq as the oracle: same bytes, every width and offset, both orders |
 | `test_nbitq_cxx.cpp` | the headers and `nbitq.hpp` from C++; calls every wrapper method |
 | `fuzz_nbitq.c` | libFuzzer harness; also runs standalone with a fixed-seed PRNG |
 | `Makefile`, `CMakeLists.txt` | two independent builds; both must stay green |
 | `release.sh` | the whole CI suite as one script, plus the version bump |
+| `tools/` | `sizes.sh` compiles the core and nbitq32 on every toolchain on PATH and writes a CSV; `crossbuild.sh` runs it in the Docker image `Dockerfile.crossbuild` and again on the host for the Apple clang row; `update_sizes.sh` rewrites the size tables in the docs from the CSVs |
 | `.github/workflows/ci.yml` | runs `release.sh` stages; tags and releases on green `main` |
 | `docs/*.md` | long-form documentation; the source of record |
 | `pages/*.html`, `pages/site.js` | the static site (bitwrench); mirrors `docs/` |
@@ -140,6 +159,8 @@ nbq_get_u32(buf, 24, 5, 12, &offset); /* offset == 3000 */
 make check        # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC, sizes
 make coverage     # every line of the library executed by the tests, or fail
 make targets      # six freestanding cross-compiles (needs clang)
+make crossbuild   # every toolchain in tools/sizes.sh, in Docker, plus the host -> build-sizes/
+make sizes-table  # rewrite the size tables in README.md, docs/ and pages/ from the CSVs
 ./release.sh      # everything CI runs, in order; exits non-zero on any failure
 ```
 
@@ -158,7 +179,7 @@ Expectations for a change:
 - New behaviour gets a test in `test_nbitq.c`. The suite counts checks;
   the count goes up, never down.
 - `make coverage` stays at 100% of lines for `nbitq.c`, `nbitq_container.c`,
-  `nbitq.h` and `nbitq.hpp`. CI runs it with gcc and gcov. A line that
+  `nbitq32.c`, `nbitq.h` and `nbitq.hpp`. CI runs it with gcc and gcov. A line that
   cannot run on a 64-bit host is marked `LCOV_EXCL_LINE` with its reason;
   there are two. That marker is not a way to skip a test that could be
   written.
@@ -166,8 +187,18 @@ Expectations for a change:
   `nbitq.hpp` and a call in `test_nbitq_cxx.cpp`. A new indexed function
   takes the order as a parameter internally and gets a plain, an `_le` and a
   `_be` name; the oracle test in `test_nbitq.c` runs it in both orders.
+- A change to the fixed-width loop in `nbitq.c` is made in `nbitq32.c` too;
+  `test_nbitq32.c` fails if the two copies disagree on a single bit.
 - Any number quoted in docs (bytes, sizes, check counts) was produced by
   running a command, not estimated. Re-run and update it if it changes.
+  The compiled-size tables are rewritten by `make sizes-table` from the CSVs
+  that `make crossbuild` produces; do not edit the rows by hand. The rows
+  sit between `<!-- crossbuild-sizes -->` markers in Markdown and
+  `// <crossbuild-sizes>` markers in the pages.
+- The core and `nbitq32.c` must compile with zero warnings on every
+  toolchain in `tools/sizes.sh`, including the 8-bit and 16-bit ones, where
+  `int` is 16 bits, and `nbitq32.c` with SDCC. CI runs the script on every
+  push.
 - `docs/` and `pages/` say the same thing in the same plain register.
   Edit `docs/` first, then mirror. Styling lives only in `pages/site.js`.
 
