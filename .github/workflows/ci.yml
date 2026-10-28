@@ -87,6 +87,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ./release.sh targets
+      # The Apple clang row of the size table; every other toolchain is
+      # "unavailable" here, which is not a failure.
+      - run: bash tools/sizes.sh build-sizes | grep -v unavailable
+
+  # The core and nbitq32 on every cross toolchain the README's size table
+  # lists, with -Wall -Wextra, because "builds warning-free everywhere" is a
+  # promise and 16-bit int targets catch what a 64-bit host cannot. The toolchains are
+  # the distribution's packages; one that the runner cannot install is an
+  # "unavailable" row, not a failure. The CSV is kept as an artifact; the
+  # tables in the docs are updated by hand with ./release.sh sizes, so a
+  # newer compiler on the runner does not fail the build over a few bytes.
+  sizes:
+    name: cross toolchains (sizes.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchains
+        run: |
+          sudo apt-get update
+          for p in gcc clang libc6-dev-i386 lib32gcc-s1 gcc-arm-none-eabi gcc-aarch64-linux-gnu \
+                   gcc-riscv64-unknown-elf gcc-riscv64-linux-gnu gcc-avr avr-libc gcc-msp430 msp430-libc \
+                   gcc-xtensa-lx106 gcc-m68k-linux-gnu gcc-mipsel-linux-gnu gcc-mips64el-linux-gnuabi64 \
+                   gcc-powerpc-linux-gnu sdcc; do
+            sudo apt-get install -y --no-install-recommends "$p" || echo "::notice::$p not installable here"
+          done
+      - run: bash tools/sizes.sh build-sizes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sizes
+          path: build-sizes/
 
   # The real coverage-guided engine, which Apple clang lacks, so Linux. With
   # CI set, release.sh fails rather than skips if libFuzzer is missing.
@@ -102,7 +133,7 @@ jobs:
   # README badge reads. Only from a green main.
   pages:
     name: deploy site + coverage badge
-    needs: [make-check, cmake, coverage, targets, libfuzzer]
+    needs: [make-check, cmake, coverage, targets, libfuzzer, sizes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -133,7 +164,7 @@ jobs:
   # already tagged is a no-op, so pushing a doc fix to main releases nothing.
   release:
     name: tag + GitHub release
-    needs: [make-check, cmake, coverage, targets, libfuzzer]
+    needs: [make-check, cmake, coverage, targets, libfuzzer, sizes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

@@ -46,6 +46,13 @@ details. From C++, `nbitq.hpp` wraps the cursor groups as `nbq::Reader`,
 | `nbq_get_varint_s` / `nbq_put_varint_s` | The same with zigzag for signed values |
 | `nbq_varint_bits` / `nbq_varint_bits_s` | Encoded width of a value at a base, without writing |
 
+**Indexed UTF-8**
+
+| Function | Does |
+|---|---|
+| `nbq_get_utf8` / `nbq_put_utf8` | Decode or encode one code point as 1 to 4 UTF-8 bytes; well-formed sequences only; `next_pos` receives the end |
+| `nbq_utf8_bits` | Encoded width of a code point (8, 16, 24 or 32), or 0 if it is not a scalar value |
+
 **Bit runs** (any length)
 
 | Function | Does |
@@ -55,7 +62,7 @@ details. From C++, `nbitq.hpp` wraps the cursor groups as `nbq::Reader`,
 | `nbq_compare_bits` | Compare two runs, first differing bit in stream order decides, like `memcmp` |
 | `nbq_popcount_bits` | Count the 1 bits in a run |
 
-Every indexed function in the three tables above has an `_le` twin with the
+Every indexed function in the four tables above has an `_le` twin with the
 same signature that is LSB first, and a `_be` macro spelling of the plain
 name; see [Bit order](#bit-order).
 
@@ -69,8 +76,8 @@ name; see [Bit order](#bit-order).
 | `nbq_reader_remaining` | Bits not yet read |
 | `nbq_reader_seek` / `nbq_writer_seek` | Move the position; a fixed writer refuses a position past its capacity |
 | `nbq_reader_align` / `nbq_writer_align` | Advance to the next multiple of `n` bits; the writer writes zeros, the reader requires zeros |
-| `nbq_read_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` | The indexed get at the cursor position, then advance |
-| `nbq_write_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` | The indexed put at the cursor position, then advance |
+| `nbq_read_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` `_utf8` | The indexed get at the cursor position, then advance |
+| `nbq_write_u64` `_s64` `_u32` `_s32` `_parts` `_varint` `_varint_s` `_utf8` | The indexed put at the cursor position, then advance |
 | `nbq_read_bits` / `nbq_write_bits` | `nbq_copy_bits` to or from the cursor position, then advance |
 | `nbq_read_f32` `_f64` / `nbq_write_f32` `_f64` | The float forms at the cursor position, then advance |
 
@@ -84,6 +91,13 @@ name; see [Bit order](#bit-order).
 | `nbq_container_read_unchecked` | The same without the CRC check |
 | `nbq_crc64` / `nbq_crc64_update` / `nbq_crc64_final` | CRC-64/XZ, one-shot or incremental |
 
+**nbitq32** (`nbitq32.h` / `nbitq32.c`, separate files, for targets with no 64-bit type; see [nbitq32](#nbitq32))
+
+| Function | Does |
+|---|---|
+| `nbq32_get` / `nbq32_put` | The u32 pair with `uint32_t` positions and lengths; same bits and result-code values as `nbq_get_u32` / `nbq_put_u32` |
+| `nbq32_get_le` / `nbq32_put_le` | The same, LSB first |
+
 Get and put exist in both the indexed and the cursor form. There is no
 insert; see [Not provided](#not-provided) for the way to do it with what is
 here.
@@ -96,7 +110,7 @@ typedef enum {
     NBQ_ERR_PARAM     = -1,   /* null pointer, or a width/base out of range     */
     NBQ_ERR_RANGE     = -2,   /* the operation would cross the end of the buffer */
     NBQ_ERR_OVERFLOW  = -3,   /* value does not fit the destination type         */
-    NBQ_ERR_MALFORMED = -4,   /* varint overlong, or an impossible encoding      */
+    NBQ_ERR_MALFORMED = -4,   /* varint overlong, UTF-8 ill-formed, or impossible */
     NBQ_ERR_ALLOC     = -5    /* only from nbq_writer_init_alloc / grow          */
 } nbq_result;
 
@@ -112,7 +126,7 @@ is written and no cursor moves.
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
 #define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.2.0"
+#define NBQ_VERSION_STRING "0.2.1"
 #define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
 
 const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
@@ -178,9 +192,10 @@ nbq_result nbq_put_s32(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, unsigne
 - The signed `get` functions sign-extend from bit `n-1`. The signed `put`
   functions write the low `n` bits of the value.
 - `put` leaves bits outside the field untouched.
-- The `u32`/`s32` functions use no 64-bit arithmetic. They are a separate
-  path that produces identical bits, for targets without a native 64-bit
-  type.
+- The `u32`/`s32` functions assemble the value in 32-bit arithmetic. They
+  are a separate path that produces identical bits. The position is still
+  `uint64_t`, converted to a byte pointer once per call; for no 64-bit type
+  at all, see [nbitq32](#nbitq32).
 
 ### 64-bit values as two halves
 
@@ -242,6 +257,40 @@ unsigned nbq_varint_bits_s(int64_t  value, unsigned base);
 - The `_s` variants apply zigzag: 0, −1, 1, −2, 2, … map to 0, 1, 2, 3, 4, …
 - `nbq_varint_bits` returns the encoded width without writing, or 0 if
   `base` is invalid.
+
+### UTF-8
+
+```c
+nbq_result nbq_get_utf8(const uint8_t *buf, uint64_t bit_len, uint64_t bit_pos, uint32_t *out, uint64_t *next_pos);
+nbq_result nbq_put_utf8(uint8_t *buf, uint64_t bit_cap, uint64_t bit_pos, uint32_t cp, uint64_t *next_pos);
+
+unsigned nbq_utf8_bits(uint32_t cp);
+```
+
+- One code point per call, as the 1 to 4 bytes of its UTF-8 encoding, each
+  byte an 8-bit field in the stream's order. At a byte-aligned position the
+  bytes are plain UTF-8 in either order: U+20AC is `E2 82 AC` both MSB
+  first and LSB first. Elsewhere they are 8-bit fields that only a reader
+  using the same order gets back as UTF-8.
+- `next_pos`, if non-NULL, receives the position just past the code point,
+  8, 16, 24 or 32 bits on; the lead byte fixes the width.
+- The decoder accepts exactly the well-formed sequences of the Unicode
+  standard (Table 3-7). An overlong form (`C0 80`, `E0 80 80`, `F0 8F BF BF`),
+  a surrogate (`ED A0 80` to `ED BF BF`), a lead byte of `F5` or above, a
+  stray or missing continuation byte: each is `NBQ_ERR_MALFORMED`. Modified
+  UTF-8 and CESU-8 are therefore refused.
+- A sequence cut off by the end of the buffer is `NBQ_ERR_RANGE`, not
+  malformed: the bytes read so far were valid and more data would complete
+  them. A bad byte before the end is `NBQ_ERR_MALFORMED` even if the buffer
+  also ends early.
+- The encoder refuses a surrogate or a value above U+10FFFF as
+  `NBQ_ERR_PARAM`, and checks that the whole encoding fits before writing
+  any of it.
+- `nbq_utf8_bits` returns the encoded width without writing, or 0 if `cp`
+  is not a scalar value.
+- Strings are not provided. A string is a loop over these calls, with a
+  length prefix or a terminator that the caller's format chooses; see
+  [Not provided](#not-provided).
 
 ### Bit runs
 
@@ -334,6 +383,7 @@ nbq_result nbq_read_s32     (nbq_reader *r, unsigned n, int32_t *out);
 nbq_result nbq_read_parts   (nbq_reader *r, unsigned n, nbq_u64_parts *out);
 nbq_result nbq_read_varint  (nbq_reader *r, unsigned base, uint64_t *out);
 nbq_result nbq_read_varint_s(nbq_reader *r, unsigned base, int64_t *out);
+nbq_result nbq_read_utf8    (nbq_reader *r, uint32_t *out);
 nbq_result nbq_read_bits    (nbq_reader *r, uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
 
 static inline nbq_result nbq_read_f32(nbq_reader *r, float  *out);   /* advance 32 */
@@ -350,6 +400,7 @@ nbq_result nbq_write_s32     (nbq_writer *w, unsigned n, int32_t value);
 nbq_result nbq_write_parts   (nbq_writer *w, unsigned n, nbq_u64_parts value);
 nbq_result nbq_write_varint  (nbq_writer *w, unsigned base, uint64_t value);
 nbq_result nbq_write_varint_s(nbq_writer *w, unsigned base, int64_t value);
+nbq_result nbq_write_utf8    (nbq_writer *w, uint32_t cp);
 nbq_result nbq_write_bits    (nbq_writer *w, const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);
 
 static inline nbq_result nbq_write_f32(nbq_writer *w, float  value);
@@ -397,6 +448,42 @@ inserting the 3-bit value 6 at bit 5 gives `9E BB 8A A0`, 27 bits, and the
 fields read back as 19, 6, 3000, 0x55. Deleting those 3 bits restores
 `9D DC 55`. An insert that would pass `cap` fails with `NBQ_ERR_RANGE` and
 moves nothing. Insertion is linear in the number of bits after `pos`.
+
+### Strings
+
+A UTF-8 string is a sequence of code points and a rule for where it ends,
+and the rule belongs to the format, not the library. The two usual rules,
+run against the library:
+
+```c
+/* length-prefixed: the count of code points as a base-5 varint, then the code points */
+static nbq_result write_str(nbq_writer *w, const uint32_t *cps, uint64_t n)
+{
+    nbq_result rc = nbq_write_varint(w, 5, n);
+    for (uint64_t i = 0; rc == NBQ_OK && i < n; i++)
+        rc = nbq_write_utf8(w, cps[i]);
+    return rc;
+}
+
+/* terminated: code points up to and including U+0000, which encodes as one zero byte */
+static nbq_result read_cstr(nbq_reader *r, uint32_t *cps, uint64_t cap, uint64_t *n)
+{
+    for (*n = 0; *n < cap; (*n)++) {
+        nbq_result rc = nbq_read_utf8(r, &cps[*n]);
+        if (rc != NBQ_OK) return rc;
+        if (cps[*n] == 0) return NBQ_OK;
+    }
+    return NBQ_ERR_RANGE;
+}
+```
+
+A count of 3 in base 5 followed by U+00E9, U+20AC and U+1F600, MSB first,
+is `78 75 3C 50 55 80` with 3 bits of the last byte unused: 5 bits of count
+and 72 bits of code points, 77 in all. The partial writes of a failed call
+are the cursor's: `nbq_write_utf8` moves nothing on failure, so `w.pos`
+after an error is the end of the last code point that fit, and a caller
+that wants all-or-nothing for the whole string seeks back to where it
+started.
 
 ### Reading backwards
 
@@ -465,6 +552,7 @@ class Reader {                       /* over nbq_reader; copyable */
     nbq_result parts(unsigned n, nbq_u64_parts *out);
     nbq_result varint(unsigned base, uint64_t *out);
     nbq_result varint_s(unsigned base, int64_t *out);
+    nbq_result utf8(uint32_t *out);
     nbq_result bits(uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n);
     nbq_result f32(float *out);      nbq_result f64(double *out);
     nbq_reader *handle();            /* the C struct; a const overload too */
@@ -485,6 +573,7 @@ class Writer {                       /* over nbq_writer; not copyable */
     nbq_result parts(unsigned n, nbq_u64_parts value);
     nbq_result varint(unsigned base, uint64_t value);
     nbq_result varint_s(unsigned base, int64_t value);
+    nbq_result utf8(uint32_t cp);
     nbq_result bits(const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n);
     nbq_result f32(float value);     nbq_result f64(double value);
     nbq_writer *handle();
@@ -551,3 +640,30 @@ uint64_t nbq_crc64_final (uint64_t crc);
 
 ECMA-182 polynomial, reflected, init and final XOR all ones. Verified
 against `CRC-64/XZ("123456789") == 0x995DC9BBDF1939FA`. Bitwise, no table.
+
+## nbitq32
+
+Separate files, `nbitq32.h` and `nbitq32.c`, for 8-bit and 16-bit CPUs and
+for compilers with no 64-bit type. Not part of the library above: the two
+files do not include `nbitq.h` and are copied alone.
+
+```c
+#include "nbitq32.h"
+
+typedef enum { NBQ32_OK = 0, NBQ32_ERR_PARAM = -1, NBQ32_ERR_RANGE = -2 } nbq32_result;
+
+nbq32_result nbq32_get   (const uint8_t *buf, uint32_t bit_len, uint32_t bit_pos, unsigned n, uint32_t *out);
+nbq32_result nbq32_put   (uint8_t *buf, uint32_t bit_cap, uint32_t bit_pos, unsigned n, uint32_t value);
+nbq32_result nbq32_get_le(const uint8_t *buf, uint32_t bit_len, uint32_t bit_pos, unsigned n, uint32_t *out);
+nbq32_result nbq32_put_le(uint8_t *buf, uint32_t bit_cap, uint32_t bit_pos, unsigned n, uint32_t value);
+#define nbq32_get_be nbq32_get
+#define nbq32_put_be nbq32_put
+```
+
+- `nbq_get_u32` / `nbq_put_u32` with `uint32_t` where those have `uint64_t`:
+  a buffer of up to 512 MB. `n` is 1..32.
+- Same bit numbering, same refusals, same all-or-nothing rule; the result
+  codes have the values of `nbq_result`. `test_nbitq32.c` proves the bytes
+  agree with `nbitq.c` for every width and offset in both orders.
+- No 64-bit type anywhere, so it builds with SDCC for Z80, 8051 and STM8,
+  where `nbitq.c` cannot. No cursor; `pos += n` is one.

@@ -77,6 +77,7 @@ public:
     nbq_result parts(unsigned int n, nbq_u64_parts *out) { return nbq_read_parts(&r_, n, out); }
     nbq_result varint(unsigned int base, uint64_t *out) { return nbq_read_varint(&r_, base, out); }
     nbq_result varint_s(unsigned int base, int64_t *out) { return nbq_read_varint_s(&r_, base, out); }
+    nbq_result utf8(uint32_t *out) { return nbq_read_utf8(&r_, out); }
     nbq_result bits(uint8_t *dst, uint64_t dst_bits, uint64_t dst_pos, uint64_t n)
     {
         return nbq_read_bits(&r_, dst, dst_bits, dst_pos, n);
@@ -140,6 +141,7 @@ public:
     nbq_result parts(unsigned int n, nbq_u64_parts value) { return nbq_write_parts(&w_, n, value); }
     nbq_result varint(unsigned int base, uint64_t value) { return nbq_write_varint(&w_, base, value); }
     nbq_result varint_s(unsigned int base, int64_t value) { return nbq_write_varint_s(&w_, base, value); }
+    nbq_result utf8(uint32_t cp) { return nbq_write_utf8(&w_, cp); }
     nbq_result bits(const uint8_t *src, uint64_t src_bits, uint64_t src_pos, uint64_t n)
     {
         return nbq_write_bits(&w_, src, src_bits, src_pos, n);

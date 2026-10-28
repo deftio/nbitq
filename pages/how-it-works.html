@@ -90,7 +90,7 @@
           S.p(['The same four bits read as signed or unsigned give −3 or 13. The buffer does not know which it is; the caller does. ', S.c('nbq_put_s32'), ' writes the low ', S.c('n'), ' bits of the value and does not check that it fits, because “the low n bits” is a well-defined operation in its own right.'])
         ], 'signed'),
 
-        S.section('5. Varints', [
+        S.section('5. Varints and UTF-8', [
           S.p(['A varint stores a number in as many fixed-size groups as it needs. Each group has ', S.c('base'), ' bits: ', S.c('base − 1'), ' payload bits and one continuation bit that says “another group follows”. Groups are written least-significant payload first. In nbitq the group width is a parameter, 2 to 64. ', { t: 'strong', c: 'Base 8 is LEB128 exactly' }, ', byte for byte:']),
           S.code(['nbq_put_varint(buf, cap, 0, 8, 300, &next);']),
           S.bits({ alt: '300 as a base-8 varint', bytes: [0xAC, 0x02], fields: [
@@ -115,7 +115,17 @@
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Canonical' },
           S.p(['One value has exactly one encoding. An encoder never emits a trailing all-zero group with the continuation bit set, and the decoder refuses to accept one: ', S.c('0x80 0x00'), ' in base 8 is ', S.c('NBQ_ERR_MALFORMED'), ', not another way to write zero. A varint whose payload would exceed 64 bits is also refused. Two programs writing the same data therefore produce the same bytes.']),
           { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Signed' },
-          S.p([S.c('nbq_put_varint_s'), ' applies zigzag first: 0 → 0, −1 → 1, 1 → 2, −2 → 3, and so on. Small negative numbers stay small. Measure signed data with ', S.c('nbq_varint_bits_s'), ', because the zigzag changes the answer.'])
+          S.p([S.c('nbq_put_varint_s'), ' applies zigzag first: 0 → 0, −1 → 1, 1 → 2, −2 → 3, and so on. Small negative numbers stay small. Measure signed data with ', S.c('nbq_varint_bits_s'), ', because the zigzag changes the answer.']),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'UTF-8' },
+          S.p(['A code point is an integer and UTF-8 is a self-delimiting encoding of it, so it sits beside the varints: the first byte says how many follow, and one value has one encoding. ', S.c('nbq_put_utf8'), ' writes the 1 to 4 bytes as 8-bit fields in the stream’s order; ', S.c('nbq_get_utf8'), ' reads the lead byte, then the continuation bytes it announces.']),
+          S.code(['nbq_put_utf8(buf, cap, 0, 0x20AC, &next);   /* the euro sign */']),
+          S.bits({ alt: 'U+20AC as three UTF-8 bytes', bytes: [0xE2, 0x82, 0xAC], fields: [
+            { name: '1110: three bytes', from: 0, len: 4 }, { name: '0010', from: 4, len: 4 },
+            { name: '10', from: 8, len: 2 }, { name: '000010', from: 10, len: 6 },
+            { name: '10', from: 16, len: 2 }, { name: '101100', from: 18, len: 6 }
+          ] }),
+          S.p(['U+20AC is 0010 0000 1010 1100, 16 bits, so three bytes: a lead byte opening 1110 with the top 4 bits, then two continuation bytes opening 10 with 6 bits each. Those are the bytes every UTF-8 text has for the euro sign, and because a byte-aligned 8-bit field is the same byte in either order, ', S.c('nbq_put_utf8_le'), ' produces them too. Off alignment the two orders differ: after a 3-bit field holding 5, the same three bytes are ', S.c('BC 50 55 80'), ' MSB first and ', S.c('15 17 64 05'), ' LSB first, and each reads back only in its own order.']),
+          S.p(['The decoder accepts exactly the well-formed sequences of the Unicode standard (Table 3-7) and nothing else. ', S.c('C0 80'), ' is ', S.c('NBQ_ERR_MALFORMED'), ', not another way to write U+0000; so is a surrogate ', S.c('ED A0 80'), ', an ', S.c('F5'), ' lead byte, or a continuation byte where a lead byte should be. A sequence cut off by the end of the buffer, ', S.c('E2 82'), ' in 16 bits, is ', S.c('NBQ_ERR_RANGE'), ': the bytes so far are valid and more data would finish them. Strings are the caller’s loop; the ', { t: 'a', a: { href: 'api.html' }, c: 'API reference' }, ' has the two usual shapes.'])
         ], 'varints'),
 
         S.section('6. Bit runs', [
@@ -152,17 +162,18 @@
             { bytes: '45 42 6B F9 29 F4 61 30', meaning: 'CRC-64 of the 12 bytes above, big-endian' }
           ]),
           S.p('Twenty bytes. The type string is free-form and never interpreted; it exists so the reading code can dispatch. The container does not look inside the payload.'),
-          S.p(['The checksum is CRC-64/XZ (ECMA-182 polynomial, reflected, init and final XOR all ones), the same one ', S.c('xz'), ' uses, verified against the published vector ', S.c('CRC-64/XZ("123456789") == 995DC9BBDF1939FA'), '. It is computed bitwise with no lookup table, because a 2 KB table is a poor trade in a library whose whole freestanding build is under 5 KB.']),
+          S.p(['The checksum is CRC-64/XZ (ECMA-182 polynomial, reflected, init and final XOR all ones), the same one ', S.c('xz'), ' uses, verified against the published vector ', S.c('CRC-64/XZ("123456789") == 995DC9BBDF1939FA'), '. It is computed bitwise with no lookup table, because a 2 KB table is a poor trade in a library whose whole freestanding build is about 7 KB.']),
           S.callout('A CRC means the bytes are intact.', 'It does not mean they are trustworthy: whoever can supply a file can supply a matching checksum. Detecting tampering needs a signature.', 'warning')
         ], 'container'),
 
         S.section('9. Values wider than 32 bits, on a 32-bit CPU', [
-          S.p(['On a target without native 64-bit arithmetic, every ', S.c('uint64_t'), ' shift is a call into compiler support code, and a bit-stream walk is nothing but shifts. The ', S.c('u32'), ' functions are a separate path that touches no 64-bit value, and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' handle widths up to 64 as a ', S.c('{hi, lo}'), ' pair of 32-bit halves:']),
+          S.p(['On a target without native 64-bit arithmetic, every ', S.c('uint64_t'), ' shift is a call into compiler support code, and a bit-stream walk is nothing but shifts. The ', S.c('u32'), ' functions are a separate path that assembles the value in 32-bit arithmetic, and ', S.c('nbq_get_parts'), ' / ', S.c('nbq_put_parts'), ' handle widths up to 64 as a ', S.c('{hi, lo}'), ' pair of 32-bit halves:']),
           S.code([
             'nbq_u64_parts p;',
             'nbq_get_parts(buf, bit_len, bit_pos, 48, &p);   /* p.hi, p.lo */'
           ]),
-          S.p(['They produce the same bits as ', S.c('nbq_get_u64'), '; the fuzz harness checks that all three paths agree on every read at every alignment.'])
+          S.p(['They produce the same bits as ', S.c('nbq_get_u64'), '; the fuzz harness checks that all three paths agree on every read at every alignment.']),
+          S.p(['Positions are ', S.c('uint64_t'), ' throughout ', S.c('nbitq.c'), ', but a field’s loop never touches one. Each fixed-width function converts the position to a byte pointer and a bit index once, and the loop over the field’s bits runs in ', S.c('unsigned int'), '. Where even that one conversion is a cost, ', S.c('nbitq32.c'), ' is the u32 pair with ', S.c('uint32_t'), ' positions: a separate copy with no 64-bit type in it, held to the same bytes as ', S.c('nbq_put_u32'), ' by its own test, which also builds with SDCC for Z80, 8051 and STM8.'])
         ], 'parts'),
 
         S.section('Performance, and why it is bit-at-a-time', [

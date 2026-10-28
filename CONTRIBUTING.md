@@ -15,8 +15,8 @@ that changes any of them is a format change, not a refactor, and must say so.
 2. **Every operation is all-or-nothing.** On failure nothing is written and no
    cursor moves.
 3. **Bad input is refused, not approximated.** Out-of-range widths and
-   positions, overlong varints, and values too wide for the destination are
-   errors.
+   positions, overlong varints, ill-formed UTF-8 and values too wide for
+   the destination are errors.
 4. **Varints are canonical.** One value encodes exactly one way.
 
 Two rules are about the repository rather than the bits:
@@ -28,10 +28,16 @@ Two rules are about the repository rather than the bits:
 - **Numbers in the docs come from a command.** Byte counts, check counts and
   code sizes in `README.md`, `docs/` and `pages/` are measured. If your
   change moves one, re-run `make check` / `make targets` and update them in
-  the same pull request.
+  the same pull request. The compiled-size tables are generated: `make
+  crossbuild` (Docker) measures every toolchain and `make sizes-table`
+  rewrites the rows between the `crossbuild-sizes` markers; do not edit
+  those rows by hand.
+- **Zero warnings on every toolchain in `tools/sizes.sh`**, including the
+  8-bit and 16-bit ones where `int` is 16 bits, and SDCC for `nbitq32.c`.
+  CI runs the script on every push and fails on a warning.
 - **Every line runs under the tests.** `make coverage` instruments the
-  library, runs all four test binaries and fails below 100% of lines in
-  `nbitq.c`, `nbitq_container.c`, `nbitq.h` and `nbitq.hpp`. CI runs it with
+  library, runs all five test binaries and fails below 100% of lines in
+  `nbitq.c`, `nbitq_container.c`, `nbitq32.c`, `nbitq.h` and `nbitq.hpp`. CI runs it with
   gcc and gcov on Linux; locally it works with gcc and gcov, or clang and
   llvm-cov. A line that cannot run on a 64-bit host may be marked
   `LCOV_EXCL_LINE` with its reason; there are two, and the marker is not a
@@ -47,6 +53,7 @@ optional.
 make check      # tests, ASan+UBSan, fuzz, C++ tests, NBQ_NO_MALLOC build, sizes
 make coverage   # every line of the library executed by the tests, or fail
 make targets    # freestanding cross-compile for Cortex-M, ARM, AArch64, x86-64
+make crossbuild # every toolchain in tools/sizes.sh, in Docker; then make sizes-table
 ./release.sh    # everything CI runs, in one go
 ```
 
@@ -59,12 +66,20 @@ The suite is exhaustive rather than representative: every width from 1 to
 truncation at every bit position, in both bit orders. Bit order is checked
 against a model in `test_nbitq.c` that expands a buffer to one character
 per bit and reads members from the string, plus a mirror identity between
-the orders and raw DEFLATE blocks from zlib. A new function is tested the
-same way, in both orders.
+the orders and raw DEFLATE blocks from zlib. UTF-8 is checked against the
+Unicode standard's table of well-formed sequences, written into the suite
+as a predicate, over every two-byte sequence at every offset and every
+scalar value. A new function is tested the same way, in both orders.
+`nbitq32.c` is a second copy of the u32 path with 32-bit positions;
+`test_nbitq32.c` holds it to `nbitq.c` byte for byte at every width and
+offset in both orders, so a change to the fixed-width loop in one file is
+made in the other.
 The fuzz harness (`fuzz_nbitq.c`) checks properties, not just the absence of
 crashes; a property callers rely on belongs in it. `make fuzz` runs it over
 a fixed-seed PRNG anywhere, and `./release.sh libfuzzer` runs it under
-libFuzzer where the toolchain has one.
+libFuzzer with the first clang that has the runtime: the one on PATH, or
+Homebrew's LLVM on a Mac (`brew install llvm`; Apple's clang has no
+libFuzzer), or `FUZZ_CLANG=/path/to/clang`.
 
 Match the surrounding style: C99, four-space indent, comments that say why.
 
@@ -94,8 +109,8 @@ taken from the version's section of `CHANGELOG.md`.
 To cut one:
 
 ```bash
-./release.sh 0.2.0            # full suite, then the bump
-./release.sh 0.2.0 --commit   # same, and commit it as "Release v0.2.0"
+./release.sh X.Y.Z            # full suite, then the bump
+./release.sh X.Y.Z --commit   # same, and commit it as "Release vX.Y.Z"
 git push origin main
 ```
 

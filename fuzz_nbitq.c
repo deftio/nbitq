@@ -6,7 +6,9 @@
  * caller actually relies on, in both bit orders:
  *
  *   - anything that decodes re-encodes to identical bits (canonical form);
- *   - the u64, u32 and hi/lo paths agree on every read, at every alignment;
+ *   - every decoded UTF-8 code point is a scalar value;
+ *   - the u64, u32 and hi/lo paths agree on every read, at every alignment,
+ *     and so does nbitq32, the separate copy with 32-bit positions;
  *   - the two orders are mirror images of each other;
  *   - a failed read leaves the cursor untouched;
  *   - a copied bit run compares equal to its source.
@@ -25,6 +27,7 @@
 #include <string.h>
 
 #include "nbitq.h"
+#include "nbitq32.h"
 
 /* The public name for an order, so every property runs in both. */
 #define BY(o, fn, ...) ((o) == NBQ_LSB_FIRST ? fn##_le(__VA_ARGS__) : fn(__VA_ARGS__))
@@ -83,6 +86,39 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         }
     }
 
+    /* UTF-8: every decode is a scalar value whose canonical re-encoding is
+       the bits that were read; every encode decodes to what went in */
+    {
+        uint64_t pos = 0;
+        for (int i = 0; i < 64; i++) {
+            uint32_t cp;
+            uint64_t next;
+            if (BY(order, nbq_get_utf8, buf, bits, pos, &cp, &next) != NBQ_OK)
+                break;
+            assert(cp <= 0x10FFFFu && (cp < 0xD800u || cp > 0xDFFFu));
+            assert(nbq_utf8_bits(cp) == (unsigned)(next - pos));
+            uint8_t re[4] = {0, 0, 0, 0};
+            assert(BY(order, nbq_put_utf8, re, 32, 0, cp, NULL) == NBQ_OK);
+            int cmp = 1;
+            assert(BY(order, nbq_compare_bits, buf, bits, pos, re, 32, 0, next - pos, &cmp) ==
+                   NBQ_OK);
+            assert(cmp == 0);
+            pos = next;
+        }
+        const uint32_t cp = ((uint32_t)data[0] << 16 | (uint32_t)data[1] << 8 | data[2]) & 0x1FFFFFu;
+        uint8_t enc[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        uint64_t next = 0;
+        if (BY(order, nbq_put_utf8, enc, 64, 5, cp, &next) == NBQ_OK) {
+            uint32_t back = 0;
+            uint64_t n2 = 0;
+            assert(nbq_utf8_bits(cp) == (unsigned)(next - 5));
+            assert(BY(order, nbq_get_utf8, enc, 64, 5, &back, &n2) == NBQ_OK);
+            assert(back == cp && n2 == next);
+        } else {
+            assert(nbq_utf8_bits(cp) == 0);
+        }
+    }
+
     /* the three fixed-width paths must agree, read for read, and the other
        order must be the mirror image */
     {
@@ -100,9 +136,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             assert(p.hi == (uint32_t)(v64 >> 32));
             assert(p.lo == (uint32_t)(v64 & 0xFFFFFFFFu));
             if (width <= 32) {
-                uint32_t v32;
+                uint32_t v32, w32;
                 assert(BY(order, nbq_get_u32, buf, bits, pos, width, &v32) == NBQ_OK);
                 assert((uint64_t)v32 == v64);
+                /* the 32-bit-position copy reads the same field */
+                assert(BY(order, nbq32_get, buf, (uint32_t)bits, (uint32_t)pos, width, &w32) ==
+                       NBQ32_OK);
+                assert(w32 == v32);
             }
             /* sign extension agrees with reinterpreting the unsigned read */
             int64_t s;

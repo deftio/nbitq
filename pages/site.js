@@ -15,7 +15,17 @@
   'use strict';
 
   var REPO = 'https://github.com/deftio/nbitq';
-  var VERSION = '0.2.0';   // kept in step by release.sh; shown beside the name
+  // Columns of the compiled-size tables; the rows are written by
+  // tools/update_sizes.sh between the crossbuild-sizes markers.
+  var SIZE_COLS = [
+    { key: 'cpu', label: 'CPU' },
+    { key: 'bits', label: 'bits' },
+    { key: 'compiler', label: 'compiler' },
+    { key: 'core', label: 'core (bytes)' },
+    { key: 'u32', label: 'u32 cursor only (bytes)' },
+    { key: 'nbitq32', label: 'nbitq32 (bytes)' }
+  ];
+  var VERSION = '0.2.1';   // kept in step by release.sh; shown beside the name
 
   var NAV = [
     { text: 'Home',            href: 'index.html' },
@@ -252,6 +262,7 @@
   window.nbitqSite = {
     page: page, section: section, code: code, table: table, callout: callout,
     bits: bits, linkButton: linkButton, next: next, p: p_, ul: ul, c: c_, REPO: REPO,
+    SIZE_COLS: SIZE_COLS,
     palette: function () { return p; }
   };
 })();

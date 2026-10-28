@@ -14,7 +14,7 @@ cmake_minimum_required(VERSION 3.16)
 
 # Only declare a project when built standalone; a parent has its own.
 if(NOT DEFINED PROJECT_NAME)
-    project(nbitq VERSION 0.2.0 LANGUAGES C CXX)
+    project(nbitq VERSION 0.2.1 LANGUAGES C CXX)
     set(NBITQ_STANDALONE TRUE)
 endif()
 
@@ -33,8 +33,16 @@ set_target_properties(nbitq PROPERTIES PUBLIC_HEADER "nbitq.h;nbitq.hpp;nbitq_co
 target_include_directories(nbitq PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 set_target_properties(nbitq PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 
+# nbitq32: the u32 pair with 32-bit positions, its own library so a small
+# target can link it and nothing else.
+add_library(nbitq32 STATIC nbitq32.c)
+set_target_properties(nbitq32 PROPERTIES PUBLIC_HEADER "nbitq32.h")
+target_include_directories(nbitq32 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(nbitq32 PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+
 if(NBITQ_STANDALONE)
     target_compile_options(nbitq PRIVATE -Wall -Wextra -pedantic)
+    target_compile_options(nbitq32 PRIVATE -Wall -Wextra -pedantic)
 endif()
 
 if(_nbitq_tests)
@@ -52,12 +60,18 @@ if(_nbitq_tests)
     add_test(NAME nbitq_container COMMAND nbitq_container_test)
     set_tests_properties(nbitq_container PROPERTIES LABELS "nbitq")
 
+    # nbitq32 against nbitq as the oracle: same bytes, every width and offset.
+    add_executable(nbitq32_test test_nbitq32.c)
+    target_link_libraries(nbitq32_test PRIVATE nbitq32 nbitq)
+    add_test(NAME nbitq32 COMMAND nbitq32_test)
+    set_tests_properties(nbitq32 PROPERTIES LABELS "nbitq")
+
     # Both headers claim extern "C" and nbitq.hpp claims to be a thin forwarder;
     # compiling, linking and running them from C++ is the only proof. The tests
     # ask the allocator for sizes it must refuse, which ASan allows only when
     # told to return NULL like a normal allocator.
     add_executable(nbitq_cxx test_nbitq_cxx.cpp)
-    target_link_libraries(nbitq_cxx PRIVATE nbitq)
+    target_link_libraries(nbitq_cxx PRIVATE nbitq nbitq32)
     add_test(NAME nbitq_cxx COMMAND nbitq_cxx)
     set_tests_properties(nbitq_cxx PROPERTIES LABELS "nbitq" ENVIRONMENT "ASAN_OPTIONS=allocator_may_return_null=1")
 
@@ -65,7 +79,7 @@ if(_nbitq_tests)
     # any toolchain. Apple's clang ships no libFuzzer.
     add_executable(nbitq_fuzz_standalone fuzz_nbitq.c)
     target_compile_definitions(nbitq_fuzz_standalone PRIVATE NBQ_FUZZ_STANDALONE)
-    target_link_libraries(nbitq_fuzz_standalone PRIVATE nbitq)
+    target_link_libraries(nbitq_fuzz_standalone PRIVATE nbitq nbitq32)
     add_test(NAME nbitq_fuzz COMMAND nbitq_fuzz_standalone 50000)
     set_tests_properties(nbitq_fuzz PROPERTIES LABELS "nbitq;fuzz" TIMEOUT 300)
 

@@ -74,7 +74,7 @@ Or fetched at configure time:
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.2.0)
+    GIT_TAG        v0.2.1)
 FetchContent_MakeAvailable(nbitq)
 target_link_libraries(your_target PRIVATE nbitq)
 ```
@@ -155,7 +155,7 @@ if (rc != NBQ_OK) {
 | `NBQ_ERR_PARAM` | null pointer, or a width or base out of range |
 | `NBQ_ERR_RANGE` | the operation would touch a bit at or past the end |
 | `NBQ_ERR_OVERFLOW` | the value does not fit the destination type |
-| `NBQ_ERR_MALFORMED` | a varint that is overlong or impossible; a bad container |
+| `NBQ_ERR_MALFORMED` | a varint that is overlong or impossible; a UTF-8 sequence that is not well-formed; a bad container |
 | `NBQ_ERR_ALLOC` | only from the growing writer, when `realloc` fails |
 
 `bit_len` is the one input the library cannot check. Every operation is
@@ -201,6 +201,27 @@ unsigned bits = nbq_varint_bits(100, 5);    /* == 10, without writing  */
 so a corpus can be measured at several bases. Signed varints
 (`nbq_write_varint_s`) use zigzag, so −1 costs the same as 0.
 
+## UTF-8 code points
+
+One code point in, one out, as the 1 to 4 bytes of its UTF-8 encoding:
+
+```c
+nbq_write_utf8(&w, 0x00E9);       /* é: C3 A9 when aligned              */
+nbq_write_utf8(&w, 0x20AC);       /* €: E2 82 AC                        */
+nbq_write_utf8(&w, 0x1F600);      /* 😀: F0 9F 98 80                    */
+
+uint32_t cp;
+nbq_read_utf8(&r, &cp);           /* cp == 0xE9; the cursor moves 16 bits */
+```
+
+The decoder accepts only well-formed UTF-8 and returns `NBQ_ERR_MALFORMED`
+for anything else: an overlong form, a surrogate, a bad continuation byte.
+A sequence the buffer ends in the middle of is `NBQ_ERR_RANGE`, so a parser
+reading from a stream knows to wait for more. The encoder refuses a
+surrogate or a value above U+10FFFF with `NBQ_ERR_PARAM`. A string is a
+loop over these calls with a length or a terminator of the format's
+choosing; the [API reference](api-reference.md#strings) has both shapes.
+
 ## Growing writer
 
 For output whose size is not known up front:
@@ -227,13 +248,48 @@ clang --target=thumbv7em-none-eabi -Oz -std=c99 -ffreestanding -nostdinc \
       -DNBQ_NO_MALLOC -c nbitq.c
 ```
 
-| target | `.text` |
-|---|---:|
-| Cortex-M3/M4/M7 (Thumb-2) | 6,555 bytes |
-| Cortex-M0 (Thumb-1) | 7,407 |
-| ARM (v7-A) | 11,025 |
-| AArch64 | 5,477 |
-| x86-64 | 5,940 |
+The core compiled for every toolchain in `tools/sizes.sh`, as bytes of
+`.text` at `-Os` with `NBQ_NO_MALLOC` and `-ffreestanding`. `core` is the
+whole library. `u32 cursor only` is what links in for a program that calls
+only `nbq_reader_init`, `nbq_writer_init`, `nbq_read_u32` and
+`nbq_write_u32`, with function sections garbage-collected from those roots.
+`nbitq32` is `nbitq32.c` alone; see
+[nbitq32](#nbitq32-the-u32-pair-with-32-bit-positions).
+
+<!-- crossbuild-sizes -->
+| CPU | bits | compiler | core | u32 cursor only | nbitq32 |
+|---|---:|---|---:|---:|---:|
+| AVR ATtiny85 | 8 | avr-gcc 5.4.0 | 26,373 | 1,972 | 1,032 |
+| AVR ATmega328P | 8 | avr-gcc 5.4.0 | 26,989 | 2,014 | 1,032 |
+| 8051 | 8 | sdcc -mmcs51 4.0.0 | n/a | n/a | 1,353 |
+| STM8 | 8 | sdcc -mstm8 4.0.0 | n/a | n/a | 750 |
+| Z80 | 8 | sdcc -mz80 4.0.0 | n/a | n/a | 1,404 |
+| MSP430 G2553 | 16 | msp430-gcc 4.6.3 | 16,784 | 1,412 | 756 |
+| Cortex-M4 (Thumb-2) | 32 | arm-none-eabi-gcc 10.3.1 | 7,281 | 594 | 354 |
+| Xtensa LX7 (ESP32-S3) | 32 | xtensa-esp32s3-elf-gcc 15.2.0 | 7,589 | 648 | 416 |
+| Cortex-M0 (Thumb-1) | 32 | arm-none-eabi-gcc 10.3.1 | 7,609 | 636 | 356 |
+| Xtensa LX6 (ESP32) | 32 | xtensa-esp32-elf-gcc 15.2.0 | 7,649 | 646 | 400 |
+| RISC-V rv32imac | 32 | riscv64-unknown-elf-gcc 10.2.0 | 8,007 | 760 | 382 |
+| Xtensa LX106 (ESP8266) | 32 | xtensa-lx106-elf-gcc 10.3.0 | 9,321 | 803 | 447 |
+| m68k | 32 | m68k-linux-gnu-gcc 11.4.0 | 9,955 | 912 | 484 |
+| ARM v7-A (A32) | 32 | arm-none-eabi-gcc 10.3.1 | 10,889 | 932 | 596 |
+| MIPS32 (little-endian) | 32 | mipsel-linux-gnu-gcc 10.3.0 | 14,400 | 1,164 | 624 |
+| PowerPC | 32 | powerpc-linux-gnu-gcc 11.4.0 | 15,229 | 1,384 | 684 |
+| x86-32 | 32 | gcc 11.4.0 | 15,639 | 1,306 | 756 |
+| RISC-V rv64gc | 64 | riscv64-linux-gnu-gcc 11.4.0 | 5,876 | 660 | 386 |
+| x86-64 | 64 | clang 14.0.0 | 6,886 | 583 | 374 |
+| Apple Silicon (arm64 macOS) | 64 | Apple clang 21.0.0 | 7,072 | 672 | 428 |
+| AArch64 | 64 | aarch64-linux-gnu-gcc 11.4.0 | 9,527 | 1,056 | 664 |
+| x86-64 | 64 | gcc 11.4.0 | 9,535 | 1,039 | 710 |
+| MIPS64 (little-endian) | 64 | mips64el-linux-gnuabi64-gcc 10.3.0 | 10,112 | 1,024 | 624 |
+<!-- crossbuild-sizes -->
+
+The compilers are the ones Ubuntu 22.04 packages, run in the Docker image
+`tools/Dockerfile.crossbuild`, plus Apple clang on an arm64 Mac; `make
+crossbuild` then `make sizes-table` reproduces the table. On an 8-bit or
+16-bit CPU every 64-bit shift is a call into compiler support code, which
+is why the whole core is several times larger there while the u32 path is
+not. The SDCC rows have no core; the next section says why.
 
 No stdio, no floating-point arithmetic, no libm, no recursion, no global state. Each
 reader or writer is independent, so the library is reentrant per instance.
@@ -242,6 +298,36 @@ On a 32-bit CPU with no native 64-bit arithmetic, use the `u32` functions
 for fields up to 32 bits and `nbq_get_parts` / `nbq_put_parts` for wider
 ones. They produce the same bits as the `u64` functions; only the
 arithmetic differs.
+
+## nbitq32: the u32 pair with 32-bit positions
+
+Everything above is the library: `nbitq.h` and `nbitq.c`, with 64-bit
+positions and values, for any CPU that has a 64-bit type, which includes
+every 32-bit microcontroller. This section is for the targets that do not.
+
+On an 8-bit or 16-bit CPU every 64-bit operation is a call into compiler
+support code, and the position arithmetic costs more than the value
+arithmetic. SDCC, the usual compiler for Z80, 8051 and STM8, has no 64-bit
+type at all and cannot compile `nbitq.c`. For those targets `nbitq32.h` and
+`nbitq32.c` are `nbq_get_u32` and `nbq_put_u32` with `uint32_t` positions
+and lengths, and nothing else:
+
+```c
+#include "nbitq32.h"
+
+uint8_t buf[4] = {0};
+nbq32_put(buf, 32, 5, 12, 3000);       /* uint32_t capacity and position */
+uint32_t v;
+nbq32_get(buf, 32, 5, 12, &v);         /* v == 3000; same bits as nbq_get_u32 */
+```
+
+Two functions and their `_le` twins, `_be` aliases, the same bit numbering,
+the same refusals and the same result-code values as `nbq_result`. No
+cursor: `pos += n` is one. The two files do not include `nbitq.h`, so they
+are copied alone, and `test_nbitq32.c` checks that they write the bytes
+`nbq_put_u32` writes for every width and offset in both orders. In the
+table above it is 354 bytes on Cortex-M4, 1,032 on AVR, and with SDCC
+1,404 on Z80, 1,353 on 8051 and 750 on STM8.
 
 ## From C++
 

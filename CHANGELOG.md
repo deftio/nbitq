@@ -10,6 +10,69 @@ keep each section self-contained.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-27
+
+### Added
+- UTF-8, one code point per call: `nbq_get_utf8` / `nbq_put_utf8` with
+  `_le` twins and `_be` aliases, `nbq_read_utf8` / `nbq_write_utf8` on the
+  cursors, `nbq_utf8_bits`, and `utf8()` on `nbq::Reader` and
+  `nbq::Writer`. A `uint32_t` in and out; the 1 to 4 bytes are 8-bit
+  fields in the stream's order, so an aligned sequence is plain UTF-8 in
+  either order. The decoder accepts exactly the well-formed sequences of
+  Unicode Table 3-7: overlong forms, surrogates, lead bytes past U+10FFFF
+  and bad continuation bytes are `NBQ_ERR_MALFORMED`; a sequence cut off by
+  the end of the buffer is `NBQ_ERR_RANGE`. The encoder refuses surrogates
+  and values above U+10FFFF as `NBQ_ERR_PARAM`. No string functions; the
+  API reference has the length-prefixed and terminated shapes as recipes.
+- Tests: the Unicode table of well-formed sequences as a predicate, with
+  every two-byte sequence at every start offset, every three-byte sequence
+  with a three-byte lead and the boundary bytes of every four-byte
+  sequence decoded against it; every scalar value U+0000..U+10FFFF encoded
+  and decoded; every length class at every start offset in both orders;
+  the fuzz harness checks that every decoded code point is a scalar value
+  that re-encodes to the bits read. The core suite is 9,777,588 checks.
+- `nbitq32.h` / `nbitq32.c`: `nbq32_get` / `nbq32_put` with `_le` twins
+  and `_be` aliases, the u32 pair with `uint32_t` positions and lengths.
+  A separate copy of the fixed-width path with no 64-bit type and no
+  dependency on `nbitq.h`, for 8-bit and 16-bit CPUs and for SDCC (Z80,
+  8051, STM8), where `nbitq.c` does not build. Same bit numbering, same
+  refusals, result codes with the values of `nbq_result`. 354 bytes on
+  Cortex-M4 and 1,032 on AVR at `-Os`, against 594 and 2,014 for the u32
+  cursor subset of the core. `test_nbitq32.c` holds it to `nbitq.c` byte
+  for byte at every width and start offset in both orders, 207,619 checks;
+  the fuzz harness and the C++ test call it too. Its own CMake target,
+  `nbitq32`.
+- `tools/sizes.sh`, `tools/crossbuild.sh`, `tools/Dockerfile.crossbuild`
+  and `tools/update_sizes.sh`: compile the core and `nbitq32.c` on
+  twenty-three toolchains from 8-bit AVR and SDCC to 64-bit MIPS and Apple
+  clang on an arm64 Mac, record the code size of the whole core, of the
+  u32-only cursor subset and of `nbitq32.c`, and rewrite the size tables
+  in README.md, `docs/getting-started.md` and the pages from the result.
+  `make crossbuild`, `make sizes-table`, `./release.sh sizes`. CI runs the
+  script on every push and fails on a warning from any toolchain.
+
+### Fixed
+- `NBQ_VERSION` shifted an `int` left by 16, which is undefined where `int`
+  is 16 bits (AVR, MSP430) and drew a warning there. It is now computed in
+  `unsigned long`; the value and its use in `#if` are unchanged.
+
+### Changed
+- The fixed-width functions address a bit as a byte pointer plus a small
+  index: the 64-bit position is converted once per call, and the loop over
+  the field's bits runs in `unsigned int`. Same bytes, smaller code where
+  64-bit arithmetic is software: at `-Os` with gcc the core went from
+  7,481 to 7,281 bytes on Cortex-M4 and from 28,053 to 26,989 on AVR, and
+  the u32 cursor subset from 648 to 594 and from 2,158 to 2,014. On MSP430
+  and on x86-64 at `-Oz` it grew by about one percent.
+- Code size: the core is 6,881 bytes at -Oz on x86-64 (was 5,901) and
+  7,283 on Cortex-M4 (was 6,555), the UTF-8 encoder and decoder with their
+  validation. A build that does not call them drops them with
+  `-ffunction-sections` and `--gc-sections`.
+- `./release.sh libfuzzer` uses the first clang that has the libFuzzer
+  runtime: the one on PATH, then Homebrew's LLVM, then `FUZZ_CLANG`. On a
+  Mac the stage ran only in CI before; it now runs locally with
+  `brew install llvm`.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
@@ -115,7 +178,8 @@ implementation is new.
 - An out-of-range width is an error rather than silently clamped.
 - The indexed and cursor paths share one implementation.
 
-[Unreleased]: https://github.com/deftio/nbitq/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/deftio/nbitq/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/deftio/nbitq/releases/tag/v0.2.1
 [0.2.0]: https://github.com/deftio/nbitq/releases/tag/v0.2.0
 [0.1.2]: https://github.com/deftio/nbitq/releases/tag/v0.1.2
 [0.1.1]: https://github.com/deftio/nbitq/releases/tag/v0.1.1

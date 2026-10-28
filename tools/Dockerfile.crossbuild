@@ -1,0 +1,51 @@
+# nbitq cross-build image: every toolchain tools/sizes.sh knows how to drive,
+# in one Ubuntu 22.04 image, so the compiled-size table in README.md is
+# produced by one command on any machine with Docker. tools/crossbuild.sh
+# builds and runs it.
+#
+# The compilers are the distribution's packages, so the table says which
+# version it was measured with. Compilers Ubuntu does not package (the
+# Espressif Xtensa toolchain for ESP32) are downloaded from their release
+# page; a failed download leaves that row as "unavailable" rather than
+# failing the build.
+#
+# Copyright (c) 2026 deftio / M. A. Chatterjee, BSD-2-Clause.
+
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# libc6-dev-i386 rather than gcc-multilib, which conflicts with the
+# cross-compiler packages on 22.04. Each toolchain pulls in its binutils.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc clang binutils \
+    libc6-dev-i386 lib32gcc-s1 \
+    gcc-arm-none-eabi \
+    gcc-aarch64-linux-gnu \
+    gcc-riscv64-unknown-elf \
+    gcc-riscv64-linux-gnu \
+    gcc-avr avr-libc \
+    gcc-msp430 msp430-libc \
+    gcc-xtensa-lx106 \
+    gcc-m68k-linux-gnu \
+    gcc-mipsel-linux-gnu \
+    gcc-mips64el-linux-gnuabi64 \
+    gcc-powerpc-linux-gnu \
+    curl ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Espressif Xtensa toolchain (ESP32, ESP32-S2, ESP32-S3). Prebuilt from
+# Espressif's crosstool-NG releases; not in the Ubuntu archive.
+RUN (curl -sL https://github.com/espressif/crosstool-NG/releases/download/esp-15.2.0_20251204/xtensa-esp-elf-15.2.0_20251204-x86_64-linux-gnu.tar.xz \
+     | tar -xJ -C /opt \
+     && for f in /opt/xtensa-esp-elf/bin/xtensa-esp*; do ln -sf "$f" /usr/local/bin/; done) \
+    || echo "NOTE: Espressif toolchain unavailable; ESP32 rows will say so"
+
+# SDCC for Z80, 8051 and STM8. It has no 64-bit type nbitq.c can use, so only
+# nbitq32.c is measured there; its own layer so a change above does not
+# redo the toolchains.
+RUN apt-get update && apt-get install -y --no-install-recommends sdcc \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nbitq
+CMD ["bash", "tools/sizes.sh", "build-sizes"]

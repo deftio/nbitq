@@ -2,21 +2,28 @@
 # release.sh -- everything CI runs, and the version bump that cuts a release.
 #
 #   ./release.sh                 run the whole suite locally and report
-#   ./release.sh 0.2.0           run the whole suite; if it is green, set the
-#                                version to 0.2.0 everywhere it is written and
+#   ./release.sh X.Y.Z           run the whole suite; if it is green, set the
+#                                version to X.Y.Z everywhere it is written and
 #                                re-run the tests against the new header
-#   ./release.sh 0.2.0 --commit  ...and commit the bump as "Release v0.2.0"
+#   ./release.sh X.Y.Z --commit  ...and commit the bump as "Release vX.Y.Z"
 #   ./release.sh <stage>         one stage only: check | cmake | coverage |
-#                                targets | libfuzzer | version
+#                                targets | libfuzzer | version | sizes
+#
+# `sizes` is not in the default run: it compiles the core with every
+# toolchain tools/sizes.sh knows (in Docker, via tools/crossbuild.sh, unless
+# they are already on PATH) and rewrites the size tables in the docs. Run it
+# before a release so the numbers in README.md are the numbers.
 #
 # .github/workflows/ci.yml runs the stages one per job, so this file is the
 # definition of "CI is green". The release itself is a push to main: the CI
 # release job reads the version (./release.sh version), and if vX.Y.Z has no
 # tag yet it creates the tag and the GitHub release from CHANGELOG.md.
 #
-# Needs: a C99 compiler and make. clang for `targets` (and for `libfuzzer`,
-# which Apple's clang cannot run; that stage is skipped outside CI when the
-# toolchain lacks it). cmake for `cmake`. gcov or llvm-cov for `coverage`.
+# Needs: a C99 compiler and make. clang for `targets`. For `libfuzzer`, a
+# clang with the libFuzzer runtime: Apple's has none, so on a Mac the stage
+# looks for Homebrew's LLVM (`brew install llvm`) and uses that, or honours
+# FUZZ_CLANG=/path/to/clang; with no such clang the stage is skipped outside
+# CI. cmake for `cmake`. gcov or llvm-cov for `coverage`.
 #
 # Copyright (c) 2026 deftio / M. A. Chatterjee, BSD-2-Clause.
 
@@ -60,7 +67,7 @@ stage_cmake() {
 }
 
 stage_coverage() {
-    say "coverage: every line of nbitq.c, nbitq_container.c, nbitq.h and nbitq.hpp"
+    say "coverage: every line of nbitq.c, nbitq_container.c, nbitq32.c, nbitq.h and nbitq.hpp"
     if ! make -s coverage-tool >"$LOG/covtool.log" 2>&1; then
         if [ -n "${CI:-}" ]; then
             cat "$LOG/covtool.log"; die "no gcov tool for ${CC:-cc}"
@@ -82,23 +89,54 @@ stage_targets() {
     fi
 }
 
+# has_libfuzzer <clang>: can this clang link -fsanitize=fuzzer?
+has_libfuzzer() {
+    command -v "$1" >/dev/null 2>&1 &&
+    printf 'int LLVMFuzzerTestOneInput(const unsigned char*d,unsigned long n){(void)d;(void)n;return 0;}' \
+        | "$1" -fsanitize=fuzzer -x c - -o "$LOG/probe" >/dev/null 2>&1
+}
+
+# fuzz_clang: FUZZ_CLANG if set, else the first clang with the runtime: the
+# one on PATH, then Homebrew's LLVM, which is how a Mac gets libFuzzer.
+fuzz_clang() {
+    local c
+    for c in "${FUZZ_CLANG:-}" clang "$(brew --prefix llvm 2>/dev/null)/bin/clang" \
+             /opt/homebrew/opt/llvm/bin/clang /usr/local/opt/llvm/bin/clang; do
+        [ -n "$c" ] && has_libfuzzer "$c" && { echo "$c"; return 0; }
+    done
+    return 1
+}
+
 stage_libfuzzer() {
     say "libFuzzer (${FUZZ_SECONDS}s)"
-    if ! printf 'int LLVMFuzzerTestOneInput(const unsigned char*d,unsigned long n){(void)d;(void)n;return 0;}' \
-         | clang -fsanitize=fuzzer -x c - -o "$LOG/probe" >/dev/null 2>&1; then
+    local cc
+    if ! cc=$(fuzz_clang); then
         if [ -n "${CI:-}" ]; then
-            die "this clang has no libFuzzer runtime"
+            die "no clang with the libFuzzer runtime"
         fi
-        echo "  SKIP: this clang has no libFuzzer runtime (Apple clang does not ship it)."
+        echo "  SKIP: no clang with the libFuzzer runtime (Apple clang does not ship it;"
+        echo "        brew install llvm, or set FUZZ_CLANG=/path/to/clang)."
         echo "        make check already ran the same harness over a fixed-seed PRNG;"
         echo "        CI runs the real engine on Linux."
         SKIPPED+=("libfuzzer")
         return 0
     fi
-    clang -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
+    echo "  $cc: $("$cc" --version | head -1)"
+    "$cc" -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
           -O1 -g -std=c99 -Wall -Wextra \
-          -o "$LOG/nbitq_libfuzzer" fuzz_nbitq.c nbitq.c
+          -o "$LOG/nbitq_libfuzzer" fuzz_nbitq.c nbitq.c nbitq32.c
     "$LOG/nbitq_libfuzzer" -max_total_time="$FUZZ_SECONDS" -max_len=320
+}
+
+stage_sizes() {
+    say "compiled sizes across toolchains"
+    if command -v arm-none-eabi-gcc >/dev/null && command -v avr-gcc >/dev/null; then
+        bash tools/sizes.sh build-sizes
+    else
+        command -v docker >/dev/null || die "neither the cross toolchains nor docker found"
+        bash tools/crossbuild.sh
+    fi
+    bash tools/update_sizes.sh
 }
 
 # Prints the version on stdout after checking that nbitq.h agrees with
@@ -206,7 +244,7 @@ STAGES=()
 SKIPPED=()
 for a in "$@"; do
     case "$a" in
-        check|cmake|coverage|targets|libfuzzer|version) STAGES+=("$a") ;;
+        check|cmake|coverage|targets|libfuzzer|version|sizes) STAGES+=("$a") ;;
         --commit) COMMIT=1 ;;
         --fuzz-seconds=*) FUZZ_SECONDS=${a#*=} ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

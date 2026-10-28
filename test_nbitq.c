@@ -231,6 +231,404 @@ static void test_varint_refusals(void)
               (unsigned long long)cut);
 }
 
+/* ── UTF-8: one code point per call, in both orders ──────────────────── */
+
+/* Unicode Table 3-7, the well-formed byte sequences, as a predicate on the
+   bytes a lead byte of each class is followed by. Written from the table,
+   not from the library, so that the two can disagree. */
+static int utf8_well_formed(const uint8_t *b, unsigned len)
+{
+    int second;
+    switch (len) {
+    case 1:
+        return b[0] <= 0x7F;
+    case 2:
+        return b[0] >= 0xC2 && b[0] <= 0xDF && b[1] >= 0x80 && b[1] <= 0xBF;
+    case 3:
+        if (b[0] == 0xE0)
+            second = b[1] >= 0xA0 && b[1] <= 0xBF;
+        else if (b[0] == 0xED)
+            second = b[1] >= 0x80 && b[1] <= 0x9F;
+        else if (b[0] >= 0xE1 && b[0] <= 0xEF)
+            second = b[1] >= 0x80 && b[1] <= 0xBF;
+        else
+            return 0;
+        return second && b[2] >= 0x80 && b[2] <= 0xBF;
+    case 4:
+        if (b[0] == 0xF0)
+            second = b[1] >= 0x90 && b[1] <= 0xBF;
+        else if (b[0] == 0xF4)
+            second = b[1] >= 0x80 && b[1] <= 0x8F;
+        else if (b[0] >= 0xF1 && b[0] <= 0xF3)
+            second = b[1] >= 0x80 && b[1] <= 0xBF;
+        else
+            return 0;
+        return second && b[2] >= 0x80 && b[2] <= 0xBF && b[3] >= 0x80 && b[3] <= 0xBF;
+    }
+    return 0;
+}
+
+/* The length a lead byte announces, per the same table; 0 if it is not a
+   lead byte of any well-formed sequence. */
+static unsigned utf8_lead_len(uint8_t b0)
+{
+    if (b0 <= 0x7F) return 1;
+    if (b0 >= 0xC2 && b0 <= 0xDF) return 2;
+    if (b0 >= 0xE0 && b0 <= 0xEF) return 3;
+    if (b0 >= 0xF0 && b0 <= 0xF4) return 4;
+    return 0;
+}
+
+/* The value a well-formed sequence denotes: the payload bits concatenated. */
+static uint32_t utf8_ref_value(const uint8_t *b, unsigned len)
+{
+    static const uint32_t lead_mask[5] = {0, 0x7F, 0x1F, 0x0F, 0x07};
+    uint32_t v = b[0] & lead_mask[len];
+    for (unsigned i = 1; i < len; i++)
+        v = (v << 6) | (b[i] & 0x3Fu);
+    return v;
+}
+
+/* Put at `off` in `order`, in a poisoned buffer; return the result and the
+   bytes written (the field read back as 8-bit values). */
+static nbq_result utf8_put_by(nbq_bit_order order, uint8_t *buf, uint64_t cap, uint64_t off,
+                              uint32_t cp, uint64_t *next)
+{
+    return order == NBQ_LSB_FIRST ? nbq_put_utf8_le(buf, cap, off, cp, next)
+                                  : nbq_put_utf8(buf, cap, off, cp, next);
+}
+static nbq_result utf8_get_by(nbq_bit_order order, const uint8_t *buf, uint64_t len, uint64_t off,
+                              uint32_t *out, uint64_t *next)
+{
+    return order == NBQ_LSB_FIRST ? nbq_get_utf8_le(buf, len, off, out, next)
+                                  : nbq_get_utf8(buf, len, off, out, next);
+}
+
+/* Every length class at every start offset within a byte, in both orders:
+   the boundaries of each class and a few values inside it. */
+static void test_utf8_every_length_offset_and_order(void)
+{
+    static const uint32_t CP[] = {0x0u,     0x1u,     0x41u,    0x7Fu,              /* 1 byte  */
+                                  0x80u,    0xE9u,    0x3FFu,   0x7FFu,             /* 2 bytes */
+                                  0x800u,   0x20ACu,  0xD7FFu,  0xE000u,  0xFFFDu,
+                                  0xFFFFu,                                          /* 3 bytes */
+                                  0x10000u, 0x1F600u, 0xFFFFFu, 0x100000u, 0x10FFFFu /* 4 bytes */};
+    uint8_t buf[16], via_u64[16];
+
+    for (int o = 0; o < 2; o++) {
+        const nbq_bit_order order = o ? NBQ_LSB_FIRST : NBQ_MSB_FIRST;
+        for (size_t i = 0; i < sizeof(CP) / sizeof(CP[0]); i++) {
+            const uint32_t cp = CP[i];
+            const unsigned want_bits = cp < 0x80u ? 8 : cp < 0x800u ? 16 : cp < 0x10000u ? 24 : 32;
+            CHECK(nbq_utf8_bits(cp) == want_bits, "utf8_bits(%X) = %u want %u", cp,
+                  nbq_utf8_bits(cp), want_bits);
+
+            for (uint64_t off = 0; off < 8; off++) {
+                uint64_t next_w = 0, next_r = 0;
+                uint32_t got = ~0u;
+                memset(buf, 0xCC, sizeof(buf));
+                CHECK(utf8_put_by(order, buf, 128, off, cp, &next_w) == NBQ_OK,
+                      "put U+%04X off=%llu order=%d", cp, (unsigned long long)off, o);
+                CHECK(next_w == off + want_bits, "next after put U+%04X off=%llu", cp,
+                      (unsigned long long)off);
+                CHECK(utf8_get_by(order, buf, 128, off, &got, &next_r) == NBQ_OK && got == cp &&
+                          next_r == next_w,
+                      "get U+%04X off=%llu order=%d: got U+%04X", cp, (unsigned long long)off, o,
+                      got);
+
+                /* The same bytes written as 8-bit fields into the same poison
+                   give identical bits: UTF-8 here is nothing but 8-bit puts in
+                   the stream's order, and the bits around the field are
+                   untouched. */
+                uint8_t enc[4];
+                const unsigned n = want_bits / 8;
+                nbq_put_utf8(enc, 32, 0, cp, NULL);
+                memset(via_u64, 0xCC, sizeof(via_u64));
+                for (unsigned k = 0; k < n; k++)
+                    CHECK((order == NBQ_LSB_FIRST
+                               ? nbq_put_u64_le(via_u64, 128, off + 8 * k, 8, enc[k])
+                               : nbq_put_u64(via_u64, 128, off + 8 * k, 8, enc[k])) == NBQ_OK,
+                          "put byte %u", k);
+                CHECK(memcmp(buf, via_u64, sizeof(buf)) == 0,
+                      "U+%04X off=%llu order=%d: not the same bits as 8-bit puts", cp,
+                      (unsigned long long)off, o);
+            }
+        }
+    }
+}
+
+/* Every scalar value, encoded and decoded, at an offset and in an order
+   that vary with the value so that every (length, offset, order) is hit
+   many times. The aligned bytes must be well-formed per the table and mean
+   the value per the table. */
+static void test_utf8_every_scalar_value(void)
+{
+    uint8_t buf[8], aligned[4];
+    for (uint32_t cp = 0; cp <= 0x10FFFFu; cp++) {
+        if (cp >= 0xD800u && cp <= 0xDFFFu) {
+            CHECK(nbq_utf8_bits(cp) == 0, "surrogate U+%04X has no width", cp);
+            continue;
+        }
+        const nbq_bit_order order = (cp & 8u) ? NBQ_LSB_FIRST : NBQ_MSB_FIRST;
+        const uint64_t off = cp & 7u;
+        uint64_t next_w = 0, next_r = 0;
+        uint32_t got = ~0u;
+        memset(buf, 0, sizeof(buf));
+        CHECK(utf8_put_by(order, buf, 64, off, cp, &next_w) == NBQ_OK &&
+                  next_w - off == nbq_utf8_bits(cp),
+              "put U+%04X", cp);
+        CHECK(utf8_get_by(order, buf, 64, off, &got, &next_r) == NBQ_OK && got == cp &&
+                  next_r == next_w,
+              "get U+%04X: got U+%04X", cp, got);
+
+        const unsigned len = nbq_utf8_bits(cp) / 8;
+        memset(aligned, 0, sizeof(aligned));
+        nbq_put_utf8(aligned, 32, 0, cp, NULL);
+        CHECK(utf8_well_formed(aligned, len) && utf8_ref_value(aligned, len) == cp,
+              "U+%04X encodes as %02X %02X %02X %02X, not well-formed per Table 3-7", cp,
+              aligned[0], aligned[1], aligned[2], aligned[3]);
+    }
+}
+
+/* The decoder against the table. Every two-byte sequence at every offset;
+   every three-byte sequence with a three-byte lead; four-byte sequences with
+   every lead and second byte and the continuation boundaries for the rest.
+   A decode succeeds exactly when the table says the bytes are well-formed,
+   gives the table's value, and re-encodes to the same bytes. */
+static void check_utf8_decode(const uint8_t *b, unsigned len, uint64_t off, nbq_bit_order order)
+{
+    uint8_t buf[12];
+    uint32_t got = ~0u;
+    uint64_t next = 0;
+    memset(buf, 0xA5, sizeof(buf));
+    for (unsigned k = 0; k < len; k++)
+        (void)(order == NBQ_LSB_FIRST ? nbq_put_u64_le(buf, 96, off + 8 * k, 8, b[k])
+                                      : nbq_put_u64(buf, 96, off + 8 * k, 8, b[k]));
+
+    const unsigned lead_len = utf8_lead_len(b[0]);
+    const int ok = lead_len != 0 && lead_len <= len && utf8_well_formed(b, lead_len);
+    const nbq_result rc = utf8_get_by(order, buf, off + 8 * len, off, &got, &next);
+    CHECK((rc == NBQ_OK) == ok, "%02X %02X %02X %02X len=%u: rc=%d, table says %s", b[0],
+          len > 1 ? b[1] : 0, len > 2 ? b[2] : 0, len > 3 ? b[3] : 0, len, rc,
+          ok ? "well-formed" : "ill-formed");
+    if (ok) {
+        CHECK(got == utf8_ref_value(b, lead_len) && next == off + 8 * lead_len,
+              "%02X %02X %02X %02X: value U+%04X next %llu", b[0], len > 1 ? b[1] : 0,
+              len > 2 ? b[2] : 0, len > 3 ? b[3] : 0, got, (unsigned long long)next);
+        uint8_t re[4] = {0, 0, 0, 0};
+        CHECK(nbq_put_utf8(re, 32, 0, got, NULL) == NBQ_OK && memcmp(re, b, lead_len) == 0,
+              "U+%04X does not re-encode to its own bytes", got);
+    } else if (lead_len != 0 && lead_len <= len) {
+        CHECK(rc == NBQ_ERR_MALFORMED, "enough bytes but ill-formed: rc=%d", rc);
+    } else {
+        CHECK(rc == NBQ_ERR_MALFORMED || rc == NBQ_ERR_RANGE, "rc=%d", rc);
+        CHECK(got == ~0u && next == 0, "a refused decode stored nothing");
+    }
+}
+
+static void test_utf8_decoder_against_the_table(void)
+{
+    uint8_t b[4];
+    for (unsigned b0 = 0; b0 < 256; b0++) {
+        for (unsigned b1 = 0; b1 < 256; b1++) {
+            b[0] = (uint8_t)b0;
+            b[1] = (uint8_t)b1;
+            for (uint64_t off = 0; off < 8; off++)
+                check_utf8_decode(b, 2, off, (off & 1) ? NBQ_LSB_FIRST : NBQ_MSB_FIRST);
+        }
+    }
+    for (unsigned b0 = 0xE0; b0 <= 0xEF; b0++) {
+        for (unsigned b1 = 0; b1 < 256; b1++) {
+            for (unsigned b2 = 0; b2 < 256; b2++) {
+                b[0] = (uint8_t)b0;
+                b[1] = (uint8_t)b1;
+                b[2] = (uint8_t)b2;
+                check_utf8_decode(b, 3, (b1 + b2) & 7, (b2 & 8) ? NBQ_LSB_FIRST : NBQ_MSB_FIRST);
+            }
+        }
+    }
+    static const uint8_t EDGE[] = {0x00, 0x7F, 0x80, 0x9F, 0xA0, 0xBF, 0xC0, 0xFF};
+    for (unsigned b0 = 0xF0; b0 <= 0xF7; b0++) {
+        for (unsigned b1 = 0; b1 < 256; b1++) {
+            for (unsigned i = 0; i < sizeof(EDGE); i++) {
+                for (unsigned j = 0; j < sizeof(EDGE); j++) {
+                    b[0] = (uint8_t)b0;
+                    b[1] = (uint8_t)b1;
+                    b[2] = EDGE[i];
+                    b[3] = EDGE[j];
+                    for (uint64_t off = 0; off < 8; off++)
+                        check_utf8_decode(b, 4, off, (b1 & 1) ? NBQ_LSB_FIRST : NBQ_MSB_FIRST);
+                }
+            }
+        }
+    }
+}
+
+static void test_utf8_known_bytes(void)
+{
+    /* Published encodings. Aligned, the bytes are the same in both orders. */
+    static const struct { uint32_t cp; unsigned len; uint8_t b[4]; } V[] = {
+        {0x0000u, 1, {0x00}},          {0x0041u, 1, {0x41}},
+        {0x007Fu, 1, {0x7F}},          {0x0080u, 2, {0xC2, 0x80}},
+        {0x00E9u, 2, {0xC3, 0xA9}},    {0x07FFu, 2, {0xDF, 0xBF}},
+        {0x0800u, 3, {0xE0, 0xA0, 0x80}}, {0x20ACu, 3, {0xE2, 0x82, 0xAC}},
+        {0xD7FFu, 3, {0xED, 0x9F, 0xBF}}, {0xE000u, 3, {0xEE, 0x80, 0x80}},
+        {0xFFFDu, 3, {0xEF, 0xBF, 0xBD}}, {0xFFFFu, 3, {0xEF, 0xBF, 0xBF}},
+        {0x10000u, 4, {0xF0, 0x90, 0x80, 0x80}}, {0x1F600u, 4, {0xF0, 0x9F, 0x98, 0x80}},
+        {0x10FFFFu, 4, {0xF4, 0x8F, 0xBF, 0xBF}},
+    };
+    uint8_t buf[8];
+    for (size_t i = 0; i < sizeof(V) / sizeof(V[0]); i++) {
+        memset(buf, 0, sizeof(buf));
+        CHECK(nbq_put_utf8(buf, 64, 0, V[i].cp, NULL) == NBQ_OK &&
+                  memcmp(buf, V[i].b, V[i].len) == 0,
+              "U+%04X MSB first: %02X %02X %02X %02X", V[i].cp, buf[0], buf[1], buf[2], buf[3]);
+        memset(buf, 0, sizeof(buf));
+        CHECK(nbq_put_utf8_le(buf, 64, 0, V[i].cp, NULL) == NBQ_OK &&
+                  memcmp(buf, V[i].b, V[i].len) == 0,
+              "U+%04X LSB first: %02X %02X %02X %02X", V[i].cp, buf[0], buf[1], buf[2], buf[3]);
+        uint32_t cp = 0;
+        CHECK(nbq_get_utf8_be(V[i].b, 8 * V[i].len, 0, &cp, NULL) == NBQ_OK && cp == V[i].cp &&
+                  nbq_get_utf8_le(V[i].b, 8 * V[i].len, 0, &cp, NULL) == NBQ_OK && cp == V[i].cp,
+              "U+%04X decodes in both orders", V[i].cp);
+    }
+
+    /* Unaligned, the two orders lay the same bytes down differently, and
+       each reads back only in its own order. */
+    uint8_t m[8] = {0}, l[8] = {0};
+    uint32_t cp = 0;
+    CHECK(nbq_put_utf8_be(m, 64, 3, 0x20ACu, NULL) == NBQ_OK &&
+              nbq_put_utf8_le(l, 64, 3, 0x20ACu, NULL) == NBQ_OK && memcmp(m, l, 8) != 0,
+          "unaligned bytes differ between orders");
+    CHECK(nbq_get_utf8_le(m, 64, 3, &cp, NULL) != NBQ_OK || cp != 0x20ACu,
+          "MSB-first bytes are not the euro sign LSB first");
+}
+
+static void test_utf8_refusals(void)
+{
+    uint8_t buf[8], poison[8];
+    uint32_t cp = 0x1234u;
+    uint64_t next = 77;
+
+    /* the encoder refuses what is not a scalar value, and writes nothing */
+    memset(buf, 0xCC, sizeof(buf));
+    memcpy(poison, buf, sizeof(buf));
+    CHECK(nbq_put_utf8(buf, 64, 0, 0xD800u, &next) == NBQ_ERR_PARAM, "surrogate D800");
+    CHECK(nbq_put_utf8(buf, 64, 0, 0xDFFFu, &next) == NBQ_ERR_PARAM, "surrogate DFFF");
+    CHECK(nbq_put_utf8(buf, 64, 0, 0x110000u, &next) == NBQ_ERR_PARAM, "past U+10FFFF");
+    CHECK(nbq_put_utf8_le(buf, 64, 0, UINT32_MAX, &next) == NBQ_ERR_PARAM, "UINT32_MAX");
+    CHECK(nbq_put_utf8(NULL, 64, 0, 0x41u, &next) == NBQ_ERR_PARAM, "null buf");
+    CHECK(memcmp(buf, poison, sizeof(buf)) == 0 && next == 77, "nothing written, next untouched");
+    CHECK(nbq_utf8_bits(0xD800u) == 0 && nbq_utf8_bits(0x110000u) == 0 &&
+              nbq_utf8_bits(UINT32_MAX) == 0,
+          "no width for a non-scalar");
+
+    /* out of room: refused before the first byte, not after the third */
+    CHECK(nbq_put_utf8(buf, 64, 64 - 31, 0x1F600u, &next) == NBQ_ERR_RANGE, "4 bytes into 31 bits");
+    CHECK(nbq_put_utf8(buf, 64, 64 - 7, 0x41u, &next) == NBQ_ERR_RANGE, "1 byte into 7 bits");
+    CHECK(nbq_put_utf8(buf, 64, 64 - 32, 0x1F600u, &next) == NBQ_OK && next == 64,
+          "4 bytes into exactly 32 bits");
+    CHECK(memcmp(buf, poison, 4) == 0, "the refused writes touched nothing");
+
+    /* the decoder refuses null, and a sequence cut off by the end is RANGE
+       at every cut, while a bad byte before the end is MALFORMED */
+    memset(buf, 0, sizeof(buf));
+    nbq_put_utf8(buf, 64, 0, 0x1F600u, NULL); /* F0 9F 98 80 */
+    CHECK(nbq_get_utf8(buf, 64, 0, NULL, &next) == NBQ_ERR_PARAM, "null out");
+    CHECK(nbq_get_utf8(NULL, 64, 0, &cp, &next) == NBQ_ERR_PARAM, "null buf");
+    for (uint64_t cut = 0; cut < 32; cut++)
+        CHECK(nbq_get_utf8(buf, cut, 0, &cp, &next) == NBQ_ERR_RANGE,
+              "cut at %llu decoded or was called malformed", (unsigned long long)cut);
+    CHECK(nbq_get_utf8(buf, 32, 0, &cp, &next) == NBQ_OK && cp == 0x1F600u && next == 32,
+          "whole");
+    buf[1] = 0x41; /* F0 41 .. : the second byte is not a continuation */
+    CHECK(nbq_get_utf8(buf, 16, 0, &cp, &next) == NBQ_ERR_MALFORMED, "bad byte before the cut");
+    CHECK(nbq_get_utf8(buf, 9, 0, &cp, &next) == NBQ_ERR_RANGE, "cut before the bad byte");
+
+    /* each refusal class by name, so a failure here reads as a sentence */
+    static const struct { const char *why; unsigned len; uint8_t b[4]; } BAD[] = {
+        {"stray continuation byte", 1, {0x80}},
+        {"C0 80, modified UTF-8 NUL", 2, {0xC0, 0x80}},
+        {"C1 BF, overlong two-byte", 2, {0xC1, 0xBF}},
+        {"E0 80 80, overlong three-byte", 3, {0xE0, 0x80, 0x80}},
+        {"E0 9F BF, overlong three-byte", 3, {0xE0, 0x9F, 0xBF}},
+        {"ED A0 80, surrogate U+D800", 3, {0xED, 0xA0, 0x80}},
+        {"ED BF BF, surrogate U+DFFF", 3, {0xED, 0xBF, 0xBF}},
+        {"F0 80 80 80, overlong four-byte", 4, {0xF0, 0x80, 0x80, 0x80}},
+        {"F0 8F BF BF, overlong four-byte", 4, {0xF0, 0x8F, 0xBF, 0xBF}},
+        {"F4 90 80 80, U+110000", 4, {0xF4, 0x90, 0x80, 0x80}},
+        {"F5 80 80 80, lead past U+10FFFF", 4, {0xF5, 0x80, 0x80, 0x80}},
+        {"FF, not a lead byte", 1, {0xFF}},
+        {"C3 41, bad continuation", 2, {0xC3, 0x41}},
+        {"E2 82 C0, bad third byte", 3, {0xE2, 0x82, 0xC0}},
+    };
+    for (size_t i = 0; i < sizeof(BAD) / sizeof(BAD[0]); i++) {
+        cp = 0x1234u;
+        next = 77;
+        CHECK(nbq_get_utf8(BAD[i].b, 8 * BAD[i].len, 0, &cp, &next) == NBQ_ERR_MALFORMED &&
+                  cp == 0x1234u && next == 77,
+              "%s", BAD[i].why);
+    }
+}
+
+static void test_utf8_cursor(void)
+{
+    static const uint32_t CP[] = {0x41u, 0xE9u, 0x20ACu, 0x1F600u, 0x0u, 0x10FFFFu};
+    uint8_t buf[32];
+    nbq_writer w;
+    nbq_reader r;
+    uint32_t cp = 0;
+
+    for (int o = 0; o < 2; o++) {
+        memset(buf, 0, sizeof(buf));
+        /* 3 + 8 + 16 + 24 + 32 = 83 bits of fields, then 4 bits of room */
+        CHECK((o ? nbq_writer_init_le(&w, buf, 87) : nbq_writer_init(&w, buf, 87)) == NBQ_OK,
+              "writer_init");
+        CHECK(nbq_write_u32(&w, 3, 5) == NBQ_OK, "a 3-bit field first, so nothing is aligned");
+        for (size_t i = 0; i < 4; i++)
+            CHECK(nbq_write_utf8(&w, CP[i]) == NBQ_OK, "write_utf8 U+%04X order=%d", CP[i], o);
+        CHECK(w.pos == 3 + 8 + 16 + 24 + 32, "pos after four code points");
+        /* 4 bits left: a one-byte code point does not fit, and the cursor stays */
+        CHECK(nbq_write_utf8(&w, 0x41u) == NBQ_ERR_RANGE && w.pos == 83, "no room, no move");
+        CHECK(nbq_write_utf8(&w, 0xD800u) == NBQ_ERR_PARAM && w.pos == 83, "surrogate refused");
+
+        CHECK((o ? nbq_reader_init_le(&r, buf, w.pos) : nbq_reader_init(&r, buf, w.pos)) == NBQ_OK,
+              "reader_init");
+        CHECK(nbq_read_u32(&r, 3, &cp) == NBQ_OK && cp == 5, "the 3-bit field");
+        for (size_t i = 0; i < 4; i++)
+            CHECK(nbq_read_utf8(&r, &cp) == NBQ_OK && cp == CP[i], "read_utf8 U+%04X order=%d",
+                  CP[i], o);
+        CHECK(nbq_reader_remaining(&r) == 0, "consumed exactly");
+        CHECK(nbq_read_utf8(&r, &cp) == NBQ_ERR_RANGE && r.pos == 83, "at the end, no move");
+        /* a sequence cut short: the reader is told the stream is 16 bits
+           shorter than the last code point needs */
+        CHECK((o ? nbq_reader_init_le(&r, buf, w.pos - 16) : nbq_reader_init(&r, buf, w.pos - 16)) ==
+                      NBQ_OK &&
+                  nbq_reader_seek(&r, 3 + 8 + 16 + 24) == NBQ_OK,
+              "seek to the last code point");
+        CHECK(nbq_read_utf8(&r, &cp) == NBQ_ERR_RANGE && r.pos == 3 + 8 + 16 + 24,
+              "cut-off read leaves the cursor");
+    }
+    CHECK(nbq_read_utf8(NULL, &cp) == NBQ_ERR_PARAM, "read_utf8 null");
+    CHECK(nbq_write_utf8(NULL, 0x41u) == NBQ_ERR_PARAM, "write_utf8 null");
+
+#ifndef NBQ_NO_MALLOC
+    /* the growing writer grows for a code point as for anything else */
+    CHECK(nbq_writer_init_alloc_le(&w, 8) == NBQ_OK, "init_alloc");
+    for (int i = 0; i < 300; i++)
+        CHECK(nbq_write_utf8(&w, CP[i % 6]) == NBQ_OK, "grow on write_utf8 %d", i);
+    CHECK(w.pos == 50 * (8 + 16 + 24 + 32 + 8 + 32), "pos after 300 code points");
+    uint64_t at = 0;
+    for (int i = 0; i < 300; i++) {
+        uint64_t next = 0;
+        CHECK(nbq_get_utf8_le(w.buf, w.cap, at, &cp, &next) == NBQ_OK && cp == CP[i % 6],
+              "read back %d", i);
+        at = next;
+    }
+    nbq_writer_free(&w);
+#endif
+}
+
 /* ── bounds: nothing may touch a bit past the limit ──────────────────── */
 
 static void test_bounds_are_enforced(void)
@@ -1387,6 +1785,12 @@ int main(void)
     test_varint_signed_every_base();
     test_varint_base8_is_leb128();
     test_varint_refusals();
+    test_utf8_every_length_offset_and_order();
+    test_utf8_every_scalar_value();
+    test_utf8_decoder_against_the_table();
+    test_utf8_known_bytes();
+    test_utf8_refusals();
+    test_utf8_cursor();
     test_bounds_are_enforced();
     test_copy_bits_every_alignment();
     test_fill_compare_popcount();
