@@ -111,6 +111,7 @@ To cut one:
 ```bash
 ./release.sh X.Y.Z            # full suite, then the bump
 ./release.sh X.Y.Z --commit   # same, and commit it as "Release vX.Y.Z"
+./release.sh X.Y.Z --publish  # same, then merge the branch into main and push; CI tags
 git push origin main
 ```
 

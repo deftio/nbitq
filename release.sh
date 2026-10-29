@@ -6,6 +6,10 @@
 #                                version to X.Y.Z everywhere it is written and
 #                                re-run the tests against the new header
 #   ./release.sh X.Y.Z --commit  ...and commit the bump as "Release vX.Y.Z"
+#   ./release.sh X.Y.Z --publish ...and merge the current branch into main
+#                                (after pulling main fast-forward), re-run the
+#                                tests on the merged tree and push main. On
+#                                main already, it pulls and pushes. CI tags.
 #   ./release.sh <stage>         one stage only: check | cmake | coverage |
 #                                targets | libfuzzer | version | sizes
 #
@@ -185,6 +189,49 @@ precheck() {
         die "--commit would sweep up unrelated edits; these files have uncommitted changes:
 $(git diff --name-only -- "${VERSION_FILES[@]}")"
     fi
+    if [ "$PUBLISH" = 1 ]; then
+        git remote get-url origin >/dev/null 2>&1 || die "--publish needs a remote named origin"
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        [ "$BRANCH" != HEAD ] || die "--publish needs a branch, not a detached HEAD"
+        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            die "--publish needs a clean tree, or the release would leave edits behind:
+$(git status --short --untracked-files=no)"
+        fi
+        git fetch -q origin main || die "could not fetch origin/main"
+        if [ "$BRANCH" = main ]; then
+            git merge-base --is-ancestor origin/main HEAD \
+                || die "main is behind origin/main; git pull --ff-only origin main first"
+        else
+            # Predict the merge now rather than after the suite has run.
+            local rc=0
+            git merge-tree --write-tree origin/main HEAD >/dev/null 2>&1 || rc=$?
+            [ "$rc" != 1 ] || die "$BRANCH does not merge cleanly into origin/main; merge main into it first"
+        fi
+    fi
+}
+
+# After the bump is committed: main up to date, the branch merged into it,
+# the tests run once more on what is actually being pushed, then the push.
+# The release itself is CI's job from here, as before.
+publish() {
+    local new=$1
+    say "publish v$new"
+    if [ "$BRANCH" != main ]; then
+        git checkout -q main
+        git pull -q --ff-only origin main
+        git merge -q --no-ff "$BRANCH" -m "Merge $BRANCH: release v$new" \
+            || die "merging $BRANCH into main stopped; resolve it, then: make test && git push origin main"
+    else
+        git pull -q --ff-only origin main \
+            || die "origin/main moved while the suite ran; git pull --rebase origin main, then: make test && git push origin main"
+    fi
+    say "tests against the merged tree"
+    make test 2>&1 | tail -1
+    stage_version >/dev/null
+    git push -q origin main
+    echo "pushed: $(git log -1 --oneline)"
+    echo "CI tags v$new and publishes the GitHub release when it is green."
+    [ "$BRANCH" = main ] || echo "Branch $BRANCH is merged; git branch -d $BRANCH when done."
 }
 
 bump() {
@@ -226,9 +273,11 @@ bump() {
         git add -- "${VERSION_FILES[@]}"
         git commit -q -m "Release v$new" -- "${VERSION_FILES[@]}"
         echo "committed: $(git log -1 --oneline)"
-        echo
-        echo "Next:  git push origin main"
-        echo "CI tags v$new and publishes the GitHub release when it is green."
+        if [ "$PUBLISH" = 0 ]; then
+            echo
+            echo "Next:  git push origin main"
+            echo "CI tags v$new and publishes the GitHub release when it is green."
+        fi
     else
         echo
         echo "Next:  git commit -am 'Release v$new' && git push origin main"
@@ -239,6 +288,8 @@ bump() {
 # ── Main ────────────────────────────────────────────────────────────────────
 
 COMMIT=0
+PUBLISH=0
+BRANCH=
 NEW=
 STAGES=()
 SKIPPED=()
@@ -246,13 +297,14 @@ for a in "$@"; do
     case "$a" in
         check|cmake|coverage|targets|libfuzzer|version|sizes) STAGES+=("$a") ;;
         --commit) COMMIT=1 ;;
+        --publish) COMMIT=1; PUBLISH=1 ;;
         --fuzz-seconds=*) FUZZ_SECONDS=${a#*=} ;;
-        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         [0-9]*) NEW=$a ;;
         *) die "unknown argument '$a' (try --help)" ;;
     esac
 done
-[ "$COMMIT" = 0 ] || [ -n "$NEW" ] || die "--commit needs a version"
+[ "$COMMIT" = 0 ] || [ -n "$NEW" ] || die "--commit and --publish need a version"
 
 if [ ${#STAGES[@]} -gt 0 ]; then
     [ -z "$NEW" ] || die "give either a stage or a version, not both"
@@ -271,4 +323,5 @@ stage_libfuzzer
 say "all stages green${SKIPPED[*]:+ (skipped: ${SKIPPED[*]})}"
 if [ -n "$NEW" ]; then
     bump "$NEW"
+    [ "$PUBLISH" = 0 ] || publish "$NEW"
 fi

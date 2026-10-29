@@ -211,7 +211,8 @@ tag already exists. CI tags `vX.Y.Z` and publishes the GitHub release
 from the changelog section once `main` is green.
 
 Do not commit, tag or push on the maintainer's behalf. Leave changes in
-the working tree and say what changed. `release.sh --commit` exists for
+the working tree and say what changed. `release.sh --commit` and
+`release.sh --publish` (commit, merge the branch into main, push) exist for
 the maintainer's use.
 
 ## Where to read more
