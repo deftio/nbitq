@@ -96,6 +96,50 @@ index       0       4 5                     16 17            23
 
 Twenty-four bits, three fields, no padding.
 
+### Where each bit goes
+
+Putting a field into a buffer that already holds data is the operation
+everything else is built from. The value has bits numbered from its bit 0,
+the stream has positions numbered from its bit 0, and `put` pairs them off
+one at a time, `n` of them, from `bit_pos` on. In an MSB-first stream the
+value's top bit, bit `n-1`, goes to `bit_pos`; in an LSB-first stream its
+bit 0 does. Bits of the buffer outside the field are neither read nor
+written. 3000 in 12 bits at bit 5, into a buffer that holds `A0 00 FF`:
+
+```c
+uint8_t buf[3] = { 0xA0, 0x00, 0xFF };
+nbq_put_u32(buf, 24, 5, 12, 3000);      /* A5 DC 7F */
+```
+
+```
+stream bit       0  1  2  3  4  5  6  7    8  9 10 11 12 13 14 15   16 17 18 19 20 21 22 23
+before  A0 00 FF 1  0  1  0  0  0  0  0    0  0  0  0  0  0  0  0    1  1  1  1  1  1  1  1
+value bit                      11 10  9    8  7  6  5  4  3  2  1    0
+after   A5 DC 7F 1  0  1  0  0  1  0  1    1  1  0  1  1  1  0  0    0  1  1  1  1  1  1  1
+```
+
+The field starts in the middle of byte 0, fills byte 1 and ends with one
+bit in byte 2. Byte 0 keeps its first five bits and byte 2 its last seven.
+The same call in the LSB-first order pairs the value's bit 0 with stream
+bit 5, which is bit 5 counted from the bottom of byte 0. The bytes are
+drawn MSB on the left, as a hex dump shows them, so the stream indices run
+the other way:
+
+```c
+uint8_t buf[3] = { 0xA0, 0x00, 0xFF };
+nbq_put_u32_le(buf, 24, 5, 12, 3000);   /* 00 77 FF */
+```
+
+```
+stream bit       7  6  5  4  3  2  1  0   15 14 13 12 11 10  9  8   23 22 21 20 19 18 17 16
+before  A0 00 FF 1  0  1  0  0  0  0  0    0  0  0  0  0  0  0  0    1  1  1  1  1  1  1  1
+value bit        2  1  0                  10  9  8  7  6  5  4  3                        11
+after   00 77 FF 0  0  0  0  0  0  0  0    0  1  1  1  0  1  1  1    1  1  1  1  1  1  1  1
+```
+
+Three bits of the value land at the top of byte 0, eight fill byte 1 and
+the last one is the bottom bit of byte 2.
+
 ## 3. Reading
 
 Reading extracts `n` bits starting at a position and assembles them into an
@@ -120,6 +164,14 @@ nbq_read_u32(&r, 7,  &flags);    /* r.pos: 17 -> 24 */
 `r.pos += n` on success. There is one implementation of every extraction,
 so the two styles cannot disagree.
 
+Reading is the pairing in the previous section run the other way. The bits
+at positions `bit_pos` to `bit_pos + n - 1` are gathered into the result,
+MSB first into bits `n-1` down to 0 and LSB first into bits 0 up to `n-1`,
+and no other bit of the buffer is looked at. `A5 DC 7F` read at bit 5 for
+12 bits gives 3000. `00 77 FF` read the same way LSB first gives 3000 too,
+and MSB first gives 239: the pairing is part of the stream's definition,
+not of the bytes.
+
 ## 4. Signed fields
 
 A signed field is stored as two's complement in `n` bits. On read, bit
@@ -140,11 +192,39 @@ uint32_t u; nbq_get_u32(buf, cap, 0, 4, &u);   /* u == 13 */
 ```
 
 The same four bits read as signed or unsigned give −3 or 13. The buffer
-does not know which it is; the caller does.
+does not know which it is; the caller does. Sign extension copies bit
+`n-1` into every bit above it; the unsigned read puts zeros there:
 
-`nbq_put_s32` writes the low `n` bits of the value. It does not check that
-the value fits in `n` bits, because "the low n bits" is a well-defined
-operation in its own right.
+```
+field, 4 bits                                             1  1  0  1
+int32_t   -3   0xFFFFFFFD    1  1  1  1  ...  1  1  1  1  1  1  0  1   bit 3 copied into bits 31..4
+uint32_t  13   0x0000000D    0  0  0  0  ...  0  0  0  0  1  1  0  1   zeros above bit 3
+```
+
+### Truncation
+
+`nbq_put_u32` and `nbq_put_s32` write the low `n` bits of the value and do
+not check that it fits. 3000 into an 8-bit field stores 184, its low byte;
+13 into a signed 4-bit field stores `1101`, which reads back as −3:
+
+```c
+nbq_put_u32(buf, cap, 0, 8, 3000);   /* B8: reads back as 184 */
+nbq_put_s32(buf, cap, 0, 4, 13);     /* D0: reads back as -3 */
+```
+
+```
+value 3000       1  0  1  1   1  0  1  1  1  0  0  0
+                 not written  the low 8 bits
+stream bit       0  1  2  3  4  5  6  7
+before  00       0  0  0  0  0  0  0  0
+value bit        7  6  5  4  3  2  1  0
+after   B8       1  0  1  1  1  0  0  0
+```
+
+"The low n bits" is a well-defined operation in its own right, and the
+range a field may hold is known where the field is defined, so the check
+belongs to the caller: `value < (1u << n)` for an unsigned field, or
+`nbq_varint_bits` when the width should follow the value instead.
 
 ## 5. Varints and UTF-8
 
@@ -233,6 +313,27 @@ byte-aligned 8-bit field is the same byte in either order, `nbq_put_utf8_le`
 produces them too. Off alignment the two orders differ: after a 3-bit field
 holding 5, the same three bytes are `BC 50 55 80` MSB first and
 `15 17 64 05` LSB first, and each reads back only in its own order.
+
+The three bytes are three 8-bit fields, so off alignment they straddle four
+bytes of the stream, and `nbq_get_utf8` gathers them back the same way.
+After that 3-bit field holding 5:
+
+```c
+uint8_t buf[4] = { 0xA0, 0, 0, 0 };         /* 101 in bits 0..2 */
+uint64_t next;
+nbq_put_utf8(buf, 32, 3, 0x20AC, &next);    /* BC 50 55 80, next == 27 */
+```
+
+```
+stream bit             0  1  2  3  4  5  6  7    8  9 10 11 12 13 14 15   16 17 18 19 20 21 22 23   24 25 26 27 28 29 30 31
+before  A0 00 00 00    1  0  1  0  0  0  0  0    0  0  0  0  0  0  0  0    0  0  0  0  0  0  0  0    0  0  0  0  0  0  0  0
+from byte                      E2 E2 E2 E2 E2   E2 E2 E2 82 82 82 82 82   82 82 82 AC AC AC AC AC   AC AC AC
+after   BC 50 55 80    1  0  1  1  1  1  0  0    0  1  0  1  0  0  0  0    0  1  0  1  0  1  0  1    1  0  0  0  0  0  0  0
+```
+
+Bits 0 to 2 keep the 5, the twenty-four bits of `E2 82 AC` follow from
+bit 3, and bits 27 to 31 are untouched. `next` is 27, where the next field
+starts.
 
 The decoder accepts exactly the well-formed sequences of the Unicode
 standard (Table 3-7) and nothing else. `C0 80` is `NBQ_ERR_MALFORMED`, not

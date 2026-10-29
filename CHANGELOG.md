@@ -10,6 +10,23 @@ keep each section self-contained.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-28
+
+### Fixed
+- `nbq_get_f32` / `nbq_get_f64`, their `_le` twins and `nbq_read_f32` /
+  `nbq_read_f64` returned `NBQ_OK` for a null output pointer without
+  producing a value, and the cursor forms advanced the reader. They now
+  return `NBQ_ERR_PARAM` and move nothing, as every other getter does.
+
+### Changed
+- How it works shows where each bit goes: a value's bits paired with the
+  stream positions they land in, in both orders, with the surrounding bits
+  untouched; sign extension against the unsigned reading of the same
+  field; truncation of a value wider than its field; and a code point
+  through its UTF-8 bytes into an unaligned position. The site draws them
+  from the value, width and position by the library's rules, and the
+  bytes in the docs come from running the library.
+
 ## [0.2.1] - 2026-10-27
 
 ### Added
@@ -178,7 +195,8 @@ implementation is new.
 - An out-of-range width is an error rather than silently clamped.
 - The indexed and cursor paths share one implementation.
 
-[Unreleased]: https://github.com/deftio/nbitq/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/deftio/nbitq/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/deftio/nbitq/releases/tag/v0.2.2
 [0.2.1]: https://github.com/deftio/nbitq/releases/tag/v0.2.1
 [0.2.0]: https://github.com/deftio/nbitq/releases/tag/v0.2.0
 [0.1.2]: https://github.com/deftio/nbitq/releases/tag/v0.1.2

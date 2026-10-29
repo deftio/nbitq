@@ -150,7 +150,7 @@ nbq_get_u32(buf, 24, 5, 12, &offset); /* offset == 3000 */
 | `tools/` | `sizes.sh` compiles the core and nbitq32 on every toolchain on PATH and writes a CSV; `crossbuild.sh` runs it in the Docker image `Dockerfile.crossbuild` and again on the host for the Apple clang row; `update_sizes.sh` rewrites the size tables in the docs from the CSVs |
 | `.github/workflows/ci.yml` | runs `release.sh` stages; tags and releases on green `main` |
 | `docs/*.md` | long-form documentation; the source of record |
-| `pages/*.html`, `pages/site.js` | the static site (bitwrench); mirrors `docs/` |
+| `pages/*.html`, `pages/site.js` | the static site (bitwrench); mirrors `docs/`. `site.js` draws the bit diagrams (`bits`, `place`, `extend`, `utf8`) from a value, width and position by the library's rules, so the bytes they show are computed, not typed |
 | `CHANGELOG.md` | Keep a Changelog format; the release notes come from it |
 
 ## Building and testing

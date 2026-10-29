@@ -126,7 +126,7 @@ is written and no cursor moves.
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 1
 #define NBQ_VERSION_PATCH 0
-#define NBQ_VERSION_STRING "0.2.1"
+#define NBQ_VERSION_STRING "0.2.2"
 #define NBQ_VERSION        /* (MAJOR << 16) | (MINOR << 8) | PATCH */
 
 const char *nbq_version_string(void);   /* the linked library's NBQ_VERSION_STRING */
@@ -235,6 +235,9 @@ static inline double   nbq_f64_from_bits(uint64_t u);
   calls them links nothing for them.
 - The position need not be byte-aligned. On a 32-bit target, `nbq_put_parts`
   with `nbq_f64_bits` split into halves avoids 64-bit arithmetic.
+- The same refusals as the integer functions: a null buffer or output
+  pointer is `NBQ_ERR_PARAM`, a field that ends past the buffer is
+  `NBQ_ERR_RANGE`, and a refused call writes nothing and moves no cursor.
 
 ### Varints
 

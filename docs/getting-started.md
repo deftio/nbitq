@@ -74,7 +74,7 @@ Or fetched at configure time:
 include(FetchContent)
 FetchContent_Declare(nbitq
     GIT_REPOSITORY https://github.com/deftio/nbitq.git
-    GIT_TAG        v0.2.1)
+    GIT_TAG        v0.2.2)
 FetchContent_MakeAvailable(nbitq)
 target_link_libraries(your_target PRIVATE nbitq)
 ```

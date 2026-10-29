@@ -59,7 +59,21 @@
             'nbq_write_u32(&w, 7,  0x55);'
           ]),
           S.bits({ alt: 'three fields in three bytes', bytes: [0x9D, 0xDC, 0x55], fields: [ { name: '19', from: 0, len: 5 }, { name: '3000', from: 5, len: 12 }, { name: '0x55', from: 17, len: 7 } ] }),
-          S.p('Twenty-four bits, three fields, no padding.')
+          S.p('Twenty-four bits, three fields, no padding.'),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Where each bit goes' },
+          S.p(['Putting a field into a buffer that already holds data is the operation everything else is built from. The value has bits numbered from its bit 0, the stream has positions numbered from its bit 0, and ', S.c('put'), ' pairs them off one at a time, ', S.c('n'), ' of them, from ', S.c('bit_pos'), ' on. In an MSB-first stream the value\'s top bit, bit ', S.c('n-1'), ', goes to ', S.c('bit_pos'), '; in an LSB-first stream its bit 0 does. Bits of the buffer outside the field are neither read nor written. 3000 in 12 bits at bit 5, into a buffer that holds ', S.c('A0 00 FF'), ':']),
+          S.code([
+            'uint8_t buf[3] = { 0xA0, 0x00, 0xFF };',
+            'nbq_put_u32(buf, 24, 5, 12, 3000);      /* A5 DC 7F */'
+          ]),
+          S.place({ alt: '3000 in 12 bits placed at bit 5 of A0 00 FF, MSB first: A5 DC 7F', value: 3000, n: 12, pos: 5, before: [0xA0, 0x00, 0xFF] }),
+          S.p('The field starts in the middle of byte 0, fills byte 1 and ends with one bit in byte 2. Byte 0 keeps its first five bits and byte 2 its last seven. The same call in the LSB-first order pairs the value\'s bit 0 with stream bit 5, which is bit 5 counted from the bottom of byte 0. The bytes are drawn MSB on the left, as a hex dump shows them, so the stream indices run the other way:'),
+          S.code([
+            'uint8_t buf[3] = { 0xA0, 0x00, 0xFF };',
+            'nbq_put_u32_le(buf, 24, 5, 12, 3000);   /* 00 77 FF */'
+          ]),
+          S.place({ alt: '3000 in 12 bits placed at bit 5 of A0 00 FF, LSB first: 00 77 FF', value: 3000, n: 12, pos: 5, order: 'lsb', before: [0xA0, 0x00, 0xFF] }),
+          S.p('Three bits of the value land at the top of byte 0, eight fill byte 1 and the last one is the bottom bit of byte 2.')
         ], 'packing'),
 
         S.section('3. Reading', [
@@ -76,7 +90,8 @@
             'nbq_read_u32(&r, 12, &offset);   /* r.pos: 5  -> 17 */',
             'nbq_read_u32(&r, 7,  &flags);    /* r.pos: 17 -> 24 */'
           ]),
-          S.p([S.c('nbq_read_u32'), ' is literally ', S.c('nbq_get_u32'), ' at ', S.c('r.pos'), ' followed by ', S.c('r.pos += n'), ' on success. There is one implementation of every extraction, so the two styles cannot disagree.'])
+          S.p([S.c('nbq_read_u32'), ' is literally ', S.c('nbq_get_u32'), ' at ', S.c('r.pos'), ' followed by ', S.c('r.pos += n'), ' on success. There is one implementation of every extraction, so the two styles cannot disagree.']),
+          S.p(['Reading is the pairing in the previous section run the other way. The bits at positions ', S.c('bit_pos'), ' to ', S.c('bit_pos + n - 1'), ' are gathered into the result, MSB first into bits ', S.c('n-1'), ' down to 0 and LSB first into bits 0 up to ', S.c('n-1'), ', and no other bit of the buffer is looked at. ', S.c('A5 DC 7F'), ' read at bit 5 for 12 bits gives 3000. ', S.c('00 77 FF'), ' read the same way LSB first gives 3000 too, and MSB first gives 239: the pairing is part of the stream\'s definition, not of the bytes.'])
         ], 'reading'),
 
         S.section('4. Signed fields', [
@@ -87,7 +102,16 @@
             'int32_t  s; nbq_get_s32(buf, cap, 0, 4, &s);   /* s == -3 */',
             'uint32_t u; nbq_get_u32(buf, cap, 0, 4, &u);   /* u == 13 */'
           ]),
-          S.p(['The same four bits read as signed or unsigned give −3 or 13. The buffer does not know which it is; the caller does. ', S.c('nbq_put_s32'), ' writes the low ', S.c('n'), ' bits of the value and does not check that it fits, because “the low n bits” is a well-defined operation in its own right.'])
+          S.p(['The same four bits read as signed or unsigned give −3 or 13. The buffer does not know which it is; the caller does. Sign extension copies bit ', S.c('n-1'), ' into every bit above it; the unsigned read puts zeros there:']),
+          S.extend({ alt: 'the 4-bit field 1101 read as int32_t, minus 3, and as uint32_t, 13', bits: '1101' }),
+          { t: 'h3', a: { class: 'bw_h5 bw_mt_4' }, c: 'Truncation' },
+          S.p([S.c('nbq_put_u32'), ' and ', S.c('nbq_put_s32'), ' write the low ', S.c('n'), ' bits of the value and do not check that it fits. 3000 into an 8-bit field stores 184, its low byte; 13 into a signed 4-bit field stores ', S.c('1101'), ', which reads back as −3:']),
+          S.code([
+            'nbq_put_u32(buf, cap, 0, 8, 3000);   /* B8: reads back as 184 */',
+            'nbq_put_s32(buf, cap, 0, 4, 13);     /* D0: reads back as -3 */'
+          ]),
+          S.place({ alt: '3000 written to an 8-bit field: the top four bits are not written, the low eight are B8', value: 3000, n: 8, show: 12, pos: 0, before: [0x00] }),
+          S.p(['“The low n bits” is a well-defined operation in its own right, and the range a field may hold is known where the field is defined, so the check belongs to the caller: ', S.c('value < (1u << n)'), ' for an unsigned field, or ', S.c('nbq_varint_bits'), ' when the width should follow the value instead.'])
         ], 'signed'),
 
         S.section('5. Varints and UTF-8', [
@@ -125,6 +149,14 @@
             { name: '10', from: 16, len: 2 }, { name: '101100', from: 18, len: 6 }
           ] }),
           S.p(['U+20AC is 0010 0000 1010 1100, 16 bits, so three bytes: a lead byte opening 1110 with the top 4 bits, then two continuation bytes opening 10 with 6 bits each. Those are the bytes every UTF-8 text has for the euro sign, and because a byte-aligned 8-bit field is the same byte in either order, ', S.c('nbq_put_utf8_le'), ' produces them too. Off alignment the two orders differ: after a 3-bit field holding 5, the same three bytes are ', S.c('BC 50 55 80'), ' MSB first and ', S.c('15 17 64 05'), ' LSB first, and each reads back only in its own order.']),
+          S.p(['The three bytes are three 8-bit fields, so off alignment they straddle four bytes of the stream, and ', S.c('nbq_get_utf8'), ' gathers them back the same way. After that 3-bit field holding 5:']),
+          S.code([
+            'uint8_t buf[4] = { 0xA0, 0, 0, 0 };         /* 101 in bits 0..2 */',
+            'uint64_t next;',
+            'nbq_put_utf8(buf, 32, 3, 0x20AC, &next);    /* BC 50 55 80, next == 27 */'
+          ]),
+          S.utf8({ alt: 'U+20AC written at bit 3 after a 3-bit field: the 16 code point bits fill the three UTF-8 bytes, which straddle four bytes of the stream as BC 50 55 80', cp: 0x20AC, pos: 3, before: [0xA0, 0, 0, 0] }),
+          S.p(['Bits 0 to 2 keep the 5, the twenty-four bits of ', S.c('E2 82 AC'), ' follow from bit 3, and bits 27 to 31 are untouched. ', S.c('next'), ' is 27, where the next field starts.']),
           S.p(['The decoder accepts exactly the well-formed sequences of the Unicode standard (Table 3-7) and nothing else. ', S.c('C0 80'), ' is ', S.c('NBQ_ERR_MALFORMED'), ', not another way to write U+0000; so is a surrogate ', S.c('ED A0 80'), ', an ', S.c('F5'), ' lead byte, or a continuation byte where a lead byte should be. A sequence cut off by the end of the buffer, ', S.c('E2 82'), ' in 16 bits, is ', S.c('NBQ_ERR_RANGE'), ': the bytes so far are valid and more data would finish them. Strings are the caller’s loop; the ', { t: 'a', a: { href: 'api.html' }, c: 'API reference' }, ' has the two usual shapes.'])
         ], 'varints'),
 

@@ -11,7 +11,7 @@ Intended use: copy `nbitq.h` and `nbitq.c` into a project and compile with `-std
 - [README](https://github.com/deftio/nbitq/blob/main/README.md): overview, quickstart, API summary, embedded sizes, comparison with other libraries
 - [API reference](https://github.com/deftio/nbitq/blob/main/docs/api-reference.md): every function with signature, behaviour and examples; result codes; what is not provided (insert/delete recipe)
 - [Getting started](https://github.com/deftio/nbitq/blob/main/docs/getting-started.md): install (copy or CMake), indexed vs cursor, result codes, back-patching, varint group width, growing writer, embedded, C++
-- [How it works](https://github.com/deftio/nbitq/blob/main/docs/how-it-works.md): bit numbering, packing across byte boundaries, signed fields, varints, bounds checks, container layout, byte values from real runs
+- [How it works](https://github.com/deftio/nbitq/blob/main/docs/how-it-works.md): bit numbering, packing across byte boundaries, where each bit of a value lands in both orders, sign extension, truncation, varints, UTF-8 at an unaligned position, bounds checks, container layout, byte values from real runs
 - [What is nbitq](https://github.com/deftio/nbitq/blob/main/docs/what-is-nbitq.md): what it does, where it fits and where it does not, function table
 - [AGENTS.md](https://github.com/deftio/nbitq/blob/main/AGENTS.md): repository map, fixed conventions, build and test expectations, release flow
 

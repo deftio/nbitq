@@ -75,8 +75,8 @@ extern "C" {
 
 #define NBQ_VERSION_MAJOR 0
 #define NBQ_VERSION_MINOR 2
-#define NBQ_VERSION_PATCH 1
-#define NBQ_VERSION_STRING "0.2.1"
+#define NBQ_VERSION_PATCH 2
+#define NBQ_VERSION_STRING "0.2.2"
 
 /** The three parts packed as 0x00MMmmpp, so versions compare as integers:
  *  `#if NBQ_VERSION >= 0x000200` */
@@ -291,8 +291,11 @@ static inline nbq_result nbq_get_f32(const uint8_t *buf, uint64_t bit_len, uint6
                                      float *out)
 {
     uint32_t u;
-    nbq_result rc = nbq_get_u32(buf, bit_len, bit_pos, 32u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_get_u32(buf, bit_len, bit_pos, 32u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f32_from_bits(u);
     return rc;
 }
@@ -304,8 +307,11 @@ static inline nbq_result nbq_get_f64(const uint8_t *buf, uint64_t bit_len, uint6
                                      double *out)
 {
     uint64_t u;
-    nbq_result rc = nbq_get_u64(buf, bit_len, bit_pos, 64u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_get_u64(buf, bit_len, bit_pos, 64u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f64_from_bits(u);
     return rc;
 }
@@ -319,8 +325,11 @@ static inline nbq_result nbq_get_f32_le(const uint8_t *buf, uint64_t bit_len, ui
                                         float *out)
 {
     uint32_t u;
-    nbq_result rc = nbq_get_u32_le(buf, bit_len, bit_pos, 32u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_get_u32_le(buf, bit_len, bit_pos, 32u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f32_from_bits(u);
     return rc;
 }
@@ -333,8 +342,11 @@ static inline nbq_result nbq_get_f64_le(const uint8_t *buf, uint64_t bit_len, ui
                                         double *out)
 {
     uint64_t u;
-    nbq_result rc = nbq_get_u64_le(buf, bit_len, bit_pos, 64u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_get_u64_le(buf, bit_len, bit_pos, 64u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f64_from_bits(u);
     return rc;
 }
@@ -601,16 +613,22 @@ nbq_result nbq_write_bits(nbq_writer *w, const uint8_t *src, uint64_t src_bits, 
 static inline nbq_result nbq_read_f32(nbq_reader *r, float *out)
 {
     uint32_t u;
-    nbq_result rc = nbq_read_u32(r, 32u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_read_u32(r, 32u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f32_from_bits(u);
     return rc;
 }
 static inline nbq_result nbq_read_f64(nbq_reader *r, double *out)
 {
     uint64_t u;
-    nbq_result rc = nbq_read_u64(r, 64u, &u);
-    if (rc == NBQ_OK && out)
+    nbq_result rc;
+    if (!out)
+        return NBQ_ERR_PARAM;
+    rc = nbq_read_u64(r, 64u, &u);
+    if (rc == NBQ_OK)
         *out = nbq_f64_from_bits(u);
     return rc;
 }

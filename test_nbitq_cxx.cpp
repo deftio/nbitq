@@ -85,6 +85,15 @@ static void test_header_inlines()
     CHECK(nbq_get_f32_le(le, 128, 0, &f) == NBQ_OK && nbq_f32_bits(f) == 0x40490FD0u, "get_f32_le");
     CHECK(nbq_put_f64_le(le, 128, 32, -2.5) == NBQ_OK && le[11] == 0xC0, "put_f64_le");
     CHECK(nbq_get_f64_le(le, 128, 32, &d) == NBQ_OK && d == -2.5, "get_f64_le");
+
+    // a null output is refused by every float getter, and the cursor stays put
+    CHECK(nbq_get_f32(buf, cap, 3, NULL) == NBQ_ERR_PARAM, "get_f32 null out");
+    CHECK(nbq_get_f64(buf, cap, 40, NULL) == NBQ_ERR_PARAM, "get_f64 null out");
+    CHECK(nbq_get_f32_le(le, 128, 0, NULL) == NBQ_ERR_PARAM, "get_f32_le null out");
+    CHECK(nbq_get_f64_le(le, 128, 32, NULL) == NBQ_ERR_PARAM, "get_f64_le null out");
+    nbq_reader_init(&r, buf, w.pos);
+    CHECK(nbq_read_f32(&r, NULL) == NBQ_ERR_PARAM && r.pos == 0, "read_f32 null out, pos kept");
+    CHECK(nbq_read_f64(&r, NULL) == NBQ_ERR_PARAM && r.pos == 0, "read_f64 null out, pos kept");
 }
 
 // Writes one of everything with the C writer; the sequence the Reader and

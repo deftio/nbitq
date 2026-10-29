@@ -972,6 +972,16 @@ static void test_float_is_a_bit_copy(void)
         CHECK(nbq_read_f32(&r, &g) == NBQ_ERR_RANGE && r.pos == 96, "read_f32 past end refused, pos kept");
         CHECK(nbq_get_f32(NULL, cap, 0, &g) == NBQ_ERR_PARAM, "null buf");
         CHECK(nbq_get_f32(buf, 31, 0, &g) == NBQ_ERR_RANGE, "31 bits is not enough");
+
+        /* A null output is refused like every other getter refuses it, and the
+           cursor does not move. */
+        CHECK(nbq_get_f32(buf, cap, 0, NULL) == NBQ_ERR_PARAM, "get_f32 null out");
+        CHECK(nbq_get_f64(buf, cap, 0, NULL) == NBQ_ERR_PARAM, "get_f64 null out");
+        CHECK(nbq_get_f32_le(buf, cap, 0, NULL) == NBQ_ERR_PARAM, "get_f32_le null out");
+        CHECK(nbq_get_f64_le(buf, cap, 0, NULL) == NBQ_ERR_PARAM, "get_f64_le null out");
+        CHECK(nbq_reader_init(&r, buf, 100) == NBQ_OK, "reader again");
+        CHECK(nbq_read_f32(&r, NULL) == NBQ_ERR_PARAM && r.pos == 0, "read_f32 null out, pos kept");
+        CHECK(nbq_read_f64(&r, NULL) == NBQ_ERR_PARAM && r.pos == 0, "read_f64 null out, pos kept");
     }
 }
 
